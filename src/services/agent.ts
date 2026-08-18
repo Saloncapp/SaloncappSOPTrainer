@@ -493,13 +493,16 @@ export async function startOrResumeAgentSession(options: {
   const ctx = buildContext(training, progress, session.currentStepNumber);
 
   const attemptState = await getActiveAttempt(progress, options.auth, training);
-  if (attemptState?.expired) {
+  const completedDuringAssessment =
+    Boolean(attemptState?.attempt?.completedAt) &&
+    (session.phase === "in_assessment" || session.expectedInput === "assessment_answer");
+  if (attemptState?.expired || completedDuringAssessment) {
     const reduced = reduceAgent(
       snapshotFromSession(session),
       {
         type: "assessment_finished",
-        passed: Boolean(attemptState.attempt.passed),
-        scorePercent: attemptState.attempt.scorePercent || 0,
+        passed: Boolean(attemptState!.attempt.passed),
+        scorePercent: attemptState!.attempt.scorePercent || 0,
       },
       ctx,
       session.lastSpokenText,
@@ -509,9 +512,9 @@ export async function startOrResumeAgentSession(options: {
     return serializeTurn({
       session,
       training,
-      progress: attemptState.progress,
+      progress: attemptState!.progress,
       reduced,
-      assessment: serializeAttempt(attemptState.attempt),
+      assessment: serializeAttempt(attemptState!.attempt),
     });
   }
 
@@ -609,6 +612,31 @@ export async function submitAgentTurn(options: {
       }
     }
     return ignoredDuringVideoTurn({ session, training, progress });
+  }
+
+  if (session.expectedInput === "assessment_answer" || session.phase === "in_assessment") {
+    const attemptState = await getActiveAttempt(progress, options.auth, training);
+    if (attemptState?.expired || attemptState?.attempt?.completedAt) {
+      const reduced = reduceAgent(
+        snapshotFromSession(session),
+        {
+          type: "assessment_finished",
+          passed: Boolean(attemptState.attempt.passed),
+          scorePercent: attemptState.attempt.scorePercent || 0,
+        },
+        ctx,
+        session.lastSpokenText,
+      );
+      applyResult(session, reduced);
+      await session.save();
+      return serializeTurn({
+        session,
+        training,
+        progress: attemptState.progress,
+        reduced,
+        assessment: serializeAttempt(attemptState.attempt),
+      });
+    }
   }
 
   if (!transcript && !options.audioBase64) {

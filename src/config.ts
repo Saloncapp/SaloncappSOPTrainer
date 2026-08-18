@@ -22,5 +22,9 @@ export const config = {
   geminiModel: process.env.GEMINI_MODEL || "gemini-2.5-flash-lite",
   corsOrigin: process.env.CORS_ORIGIN || "*",
   videoCompletionRatio: 0.95,
-  assessmentTimeLimitSeconds: Number(process.env.ASSESSMENT_TIME_LIMIT_SECONDS || 600),
+  assessmentQuestionCount: Math.max(
+    1,
+    Number(process.env.ASSESSMENT_QUESTION_COUNT || 5) || 5,
+  ),
+  assessmentTimeLimitSeconds: Number(process.env.ASSESSMENT_TIME_LIMIT_SECONDS || 300),
 };

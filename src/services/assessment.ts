@@ -27,7 +27,13 @@ function sopContext(training: SopDefinition): string {
 function timeLimitSeconds(): number {
   return Number(config.assessmentTimeLimitSeconds) > 0
     ? Number(config.assessmentTimeLimitSeconds)
-    : 600;
+    : 300;
+}
+
+function assessmentQuestionCount(): number {
+  return Number(config.assessmentQuestionCount) > 0
+    ? Number(config.assessmentQuestionCount)
+    : 5;
 }
 
 export function getAttemptExpiresAt(attempt: IAssessmentAttempt): Date {
@@ -61,7 +67,7 @@ async function completeAttempt(options: {
   timedOut: boolean;
 }): Promise<{ attempt: IAssessmentAttempt; progress: IStaffTrainingProgress }> {
   const { attempt, progress, timedOut } = options;
-  const total = attempt.questions.length || 10;
+  const total = attempt.questions.length || assessmentQuestionCount();
   const correctCount = attempt.questions.filter((q) => q.correct === true).length;
   const scorePercent = (correctCount / total) * 100;
   const passed = scorePercent > 80;

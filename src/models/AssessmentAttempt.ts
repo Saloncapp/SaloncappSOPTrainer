@@ -54,7 +54,7 @@ const AssessmentAttemptSchema = new Schema<IAssessmentAttempt>(
     scorePercent: { type: Number, default: null },
     passed: { type: Boolean, default: null },
     timedOut: { type: Boolean, default: false },
-    timeLimitSeconds: { type: Number, default: 600, min: 1 },
+    timeLimitSeconds: { type: Number, default: 300, min: 1 },
     expiresAt: { type: Date, default: null },
     startedAt: { type: Date, default: Date.now },
     completedAt: { type: Date, default: null },

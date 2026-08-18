@@ -241,6 +241,7 @@ export async function generateAssessmentQuestions(options: {
   sopContext: string;
   previousQuestions: string[];
 }): Promise<GeneratedQuestion[]> {
+  const count = Math.max(1, Number(config.assessmentQuestionCount) || 5);
   const avoid =
     options.previousQuestions.length > 0
       ? `Avoid repeating these previous questions where possible:\n${options.previousQuestions
@@ -251,7 +252,7 @@ export async function generateAssessmentQuestions(options: {
   const parsed = (await generateJson(`
 ${options.sopContext}
 
-Task: Generate exactly 10 final assessment questions based ONLY on this SOP.
+Task: Generate exactly ${count} final assessment questions based ONLY on this SOP.
 Cover different steps where possible. Do NOT ask random general salon questions.
 ${avoid}
 
@@ -264,16 +265,37 @@ Return JSON:
 `)) as { questions?: GeneratedQuestion[] };
 
   const questions = Array.isArray(parsed.questions) ? parsed.questions : [];
-  if (questions.length !== 10) {
-    throw new Error("Gemini did not return exactly 10 assessment questions");
+  const usable = questions
+    .map((q) => ({
+      questionText: String(q.questionText || "").trim(),
+      relatedStepNumbers: Array.isArray(q.relatedStepNumbers)
+        ? q.relatedStepNumbers.map(Number).filter((n) => n > 0)
+        : [],
+    }))
+    .filter((q) => q.questionText.length > 0);
+
+  if (usable.length < count) {
+    throw new Error(`Gemini did not return exactly ${count} assessment questions`);
   }
-  return questions.map((q, i) => ({
-    index: i + 1,
-    questionText: String(q.questionText || "").trim(),
-    relatedStepNumbers: Array.isArray(q.relatedStepNumbers)
-      ? q.relatedStepNumbers.map(Number).filter((n) => n > 0)
-      : [],
-  }));
+
+  return shuffle(usable)
+    .slice(0, count)
+    .map((q, i) => ({
+      index: i + 1,
+      questionText: q.questionText,
+      relatedStepNumbers: q.relatedStepNumbers,
+    }));
+}
+
+function shuffle<T>(items: T[]): T[] {
+  const next = [...items];
+  for (let i = next.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = next[i];
+    next[i] = next[j];
+    next[j] = tmp;
+  }
+  return next;
 }
 
 export async function transcribeSpeech(options: {

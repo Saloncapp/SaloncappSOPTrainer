@@ -54,7 +54,7 @@ After a staff member taps a service card in the Training tab, the agent owns the
 1. Welcome and ask to begin the current step.
 2. Play that step's video. The agent does not speak or listen during playback.
 3. After the video finishes, ask to rewatch or continue.
-4. Repeat for every step, then offer the 10-question assessment (pass mark: more than 80%).
+4. Repeat for every step, then offer the 5-question assessment (5 minutes, pass mark: more than 80%).
 5. On fail, keep completed videos. The staff can retake immediately or ask to review a step by title or concept.
 
 Agent APIs (staff JWT + `x-tenant-id`):

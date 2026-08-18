@@ -169,8 +169,7 @@ export function reconcileForServiceEntry(
 }
 
 export function stepIntroPrompt(ctx: AgentContext, stepNumber: number): string {
-  const title = titleOf(ctx, stepNumber);
-  return `Playing step ${stepNumber}, ${title} now. I will stay quiet until the video finishes.`;
+  return `Got it. I'll play the Step ${stepNumber} training video now. Please watch carefully.`;
 }
 
 export function postWatchPrompt(
@@ -180,10 +179,12 @@ export function postWatchPrompt(
 ): string {
   const watched = watchedStepNumber || cursorStepNumber;
   const title = titleOf(ctx, watched);
+
   if (isLastStep(ctx, cursorStepNumber)) {
-    return `We have finished step ${watched}, ${title}. You can ask a question, watch it again, watch an earlier step, or say you are ready for the assessment.`;
+    return `Great, you have completed Step ${watched}, ${title}. If you have any questions, you can ask me, review this step, revisit an earlier step, or let me know when you’re ready for the assessment.`;
   }
-  return `We have finished step ${watched}, ${title}. You can ask a question, watch it again, watch an earlier step, or move to the next video.`;
+
+  return `Great, you have completed Step ${watched}, ${title}. If you have any questions, you can ask me, review this step, revisit an earlier step, or let me know when you’re ready to continue to the next video.`;
 }
 
 export function postVideoDoubtPrompt(ctx: AgentContext, stepNumber: number): string {
@@ -202,12 +203,11 @@ export function doubtFollowUpPrompt(ctx: AgentContext, cursorStepNumber: number)
 }
 
 export function assessmentOfferPrompt(ctx: AgentContext): string {
-  return `You have finished every step of ${ctx.trainingTitle}. Would you like to take the ten-question assessment now? You need more than 80 percent to pass.`;
+  return `You have finished every step of ${ctx.trainingTitle}. Would you like to take the five-question assessment now? You have five minutes, and you need more than 80 percent to pass.`;
 }
 
 export function reviewIntroPrompt(ctx: AgentContext, stepNumber: number): string {
-  const title = titleOf(ctx, stepNumber);
-  return `I found step ${stepNumber}, ${title}. Playing that video now. I will stay quiet until it finishes.`;
+  return stepIntroPrompt(ctx, stepNumber);
 }
 
 export function postReviewDoubtPrompt(ctx: AgentContext, stepNumber: number): string {
