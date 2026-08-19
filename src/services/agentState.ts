@@ -181,10 +181,10 @@ export function postWatchPrompt(
   const title = titleOf(ctx, watched);
 
   if (isLastStep(ctx, cursorStepNumber)) {
-    return `Great, you have completed Step ${watched}, ${title}. If you have any questions, you can ask me, review this step, revisit an earlier step, or let me know when you’re ready for the assessment.`;
+    return `Step ${watched}, ${title}, is complete. Ask doubts, rewatch it, revisit an earlier step, or start the assessment.`;
   }
 
-  return `Great, you have completed Step ${watched}, ${title}. If you have any questions, you can ask me, review this step, revisit an earlier step, or let me know when you’re ready to continue to the next video.`;
+  return `Step ${watched} is complete. Ask doubts, rewatch it, revisit an earlier step, or play the next step.`;
 }
 
 export function postVideoDoubtPrompt(ctx: AgentContext, stepNumber: number): string {
@@ -206,6 +206,18 @@ export function assessmentOfferPrompt(ctx: AgentContext): string {
   return `You have finished every step of ${ctx.trainingTitle}. Would you like to take the five-question assessment now? You have five minutes, and you need more than 80 percent to pass.`;
 }
 
+export function assessmentDeclinePrompt(): string {
+  return "Okay, no problem. You can continue later. Take your time.";
+}
+
+export function assessmentResumePrompt(): string {
+  return "Welcome back. You completed all the training steps earlier. You were ready for the assessment. Would you like to start it now?";
+}
+
+export function assessmentAskAgainPrompt(): string {
+  return "Would you like to start the assessment now?";
+}
+
 export function reviewIntroPrompt(ctx: AgentContext, stepNumber: number): string {
   return stepIntroPrompt(ctx, stepNumber);
 }
@@ -216,7 +228,7 @@ export function postReviewDoubtPrompt(ctx: AgentContext, stepNumber: number): st
 
 export function postReviewPrompt(ctx: AgentContext, stepNumber: number): string {
   const title = titleOf(ctx, stepNumber);
-  return `That was step ${stepNumber}, ${title}. You can ask a question, watch it again, watch another step, or say you are ready for the assessment.`;
+  return `That was step ${stepNumber}, ${title}. Ask doubts, watch it again, watch another step, or say you are ready for the assessment.`;
 }
 
 export function failPrompt(scorePercent: number): string {
@@ -245,45 +257,81 @@ function clarify(snapshot: AgentSnapshot, detail?: string): AgentReduceResult {
   );
 }
 
+const EMPTY_REPLY_PREFIX = "I can't get you.";
+
+function looksLikePlayVideoIntro(text: string): boolean {
+  return /\bi(?:'|’)?ll play\b|\btraining video now\b/i.test(String(text || ""));
+}
+
+function underlyingPrompt(text: string): string {
+  let next = String(text || "").trim();
+  const prefix = EMPTY_REPLY_PREFIX.toLowerCase();
+  while (next.toLowerCase().startsWith(prefix)) {
+    next = next.slice(EMPTY_REPLY_PREFIX.length).trim();
+  }
+  return next;
+}
+
+function phaseReprompt(
+  snapshot: AgentSnapshot,
+  ctx: AgentContext,
+  lastSpokenText: string,
+): string {
+  const previous = underlyingPrompt(lastSpokenText);
+  if (previous && !looksLikePlayVideoIntro(previous)) {
+    return previous;
+  }
+  if (snapshot.phase === "post_video") {
+    return postWatchPrompt(
+      ctx,
+      snapshot.currentStepNumber,
+      snapshot.reviewStepNumber || snapshot.currentStepNumber,
+    );
+  }
+  if (snapshot.phase === "post_review") {
+    const reviewStep = snapshot.reviewStepNumber || snapshot.currentStepNumber;
+    return snapshot.navigationOffered
+      ? postReviewPrompt(ctx, reviewStep)
+      : postReviewDoubtPrompt(ctx, reviewStep);
+  }
+  if (snapshot.phase === "welcome") {
+    return welcomePrompt(ctx, snapshot.currentStepNumber);
+  }
+  if (snapshot.phase === "awaiting_assessment") {
+    return assessmentOfferPrompt(ctx);
+  }
+  if (snapshot.phase === "failed_recovery") {
+    return "You can retake the assessment now, or tell me a step title or concept you want to review.";
+  }
+  return "Please try again when you are ready.";
+}
+
+function looksLikePostponeSpeech(text: string): boolean {
+  const t = String(text || "").toLowerCase();
+  return (
+    t.includes("continue later") ||
+    t.includes("take your time") ||
+    t.includes("no problem")
+  );
+}
+
 function emptyReply(
   snapshot: AgentSnapshot,
   ctx: AgentContext,
   lastSpokenText: string,
 ): AgentReduceResult {
-  if (snapshot.phase === "post_video") {
-    const prompt =
-      lastSpokenText ||
-      postWatchPrompt(ctx, snapshot.currentStepNumber, snapshot.reviewStepNumber || snapshot.currentStepNumber);
-    return stay(snapshot, `I can't get you. ${prompt}`);
+  if (
+    (snapshot.phase === "awaiting_assessment" ||
+      snapshot.phase === "failed_recovery" ||
+      snapshot.phase === "post_review") &&
+    looksLikePostponeSpeech(lastSpokenText)
+  ) {
+    return postponeAssessment(snapshot);
   }
-  if (snapshot.phase === "post_review") {
-    const reviewStep = snapshot.reviewStepNumber || snapshot.currentStepNumber;
-    const prompt =
-      lastSpokenText ||
-      (snapshot.navigationOffered
-        ? postReviewPrompt(ctx, reviewStep)
-        : postReviewDoubtPrompt(ctx, reviewStep));
-    return stay(snapshot, `I can't get you. ${prompt}`);
-  }
-  if (snapshot.phase === "welcome") {
-    const prompt =
-      lastSpokenText ||
-      welcomePrompt(ctx, snapshot.currentStepNumber);
-    return stay(snapshot, `I can't get you. ${prompt}`);
-  }
-  if (snapshot.phase === "awaiting_assessment") {
-    return stay(
-      snapshot,
-      `I can't get you. ${assessmentOfferPrompt(ctx)}`,
-    );
-  }
-  if (snapshot.phase === "failed_recovery") {
-    return stay(
-      snapshot,
-      "I can't get you. You can retake the assessment now, or tell me a step title or concept you want to review.",
-    );
-  }
-  return stay(snapshot, "I can't get you. Please try again when you are ready.");
+  return stay(
+    snapshot,
+    `${EMPTY_REPLY_PREFIX} ${phaseReprompt(snapshot, ctx, lastSpokenText)}`,
+  );
 }
 
 function replayLast(snapshot: AgentSnapshot, lastSpokenText: string): AgentReduceResult {
@@ -473,7 +521,7 @@ export function bootstrap(
         reviewStepNumber: null,
         navigationOffered: false,
       },
-      assessmentOfferPrompt(ctx),
+      assessmentResumePrompt(),
       { type: "listen" },
     );
   }
@@ -608,7 +656,7 @@ function onVoice(
 
   switch (snapshot.phase) {
     case "welcome":
-      return onWelcomeVoice(snapshot, ctx, intent);
+      return onWelcomeVoice(snapshot, ctx, intent, lastSpokenText);
     case "post_video":
       return onPostVideoVoice(snapshot, ctx, intent);
     case "awaiting_assessment":
@@ -761,16 +809,14 @@ function onWelcomeVoice(
   snapshot: AgentSnapshot,
   ctx: AgentContext,
   intent: ParsedIntent,
+  lastSpokenText: string,
 ): AgentReduceResult {
   const review = handleReviewIntent(snapshot, ctx, intent);
   if (review) return review;
   if (intent.type === "confirm" || intent.type === "next" || intent.type === "assessment") {
     return beginStep(ctx, snapshot.currentStepNumber);
   }
-  return clarify(
-    snapshot,
-    "When you are ready, say yes and I will start the first video.",
-  );
+  return emptyReply(snapshot, ctx, lastSpokenText);
 }
 
 function onPostVideoVoice(
@@ -816,11 +862,29 @@ function onPostVideoVoice(
   );
 }
 
+function postponeAssessment(snapshot: AgentSnapshot): AgentReduceResult {
+  return {
+    snapshot: {
+      phase: "awaiting_assessment",
+      currentStepNumber: snapshot.currentStepNumber,
+      reviewStepNumber: null,
+      navigationOffered: false,
+    },
+    expectedInput: "none",
+    spokenText: assessmentDeclinePrompt(),
+    action: { type: "idle" },
+    speak: true,
+  };
+}
+
 function onAwaitingAssessmentVoice(
   snapshot: AgentSnapshot,
   ctx: AgentContext,
   intent: ParsedIntent,
 ): AgentReduceResult {
+  if (intent.type === "decline") {
+    return postponeAssessment(snapshot);
+  }
   const review = handleReviewIntent(snapshot, ctx, intent);
   if (review) return review;
   if (intent.type === "rewatch") {
@@ -829,10 +893,7 @@ function onAwaitingAssessmentVoice(
   if (intent.type === "assessment" || intent.type === "confirm" || intent.type === "retake") {
     return result(snapshot, "", { type: "listen" }, false);
   }
-  return clarify(
-    snapshot,
-    "Say yes to start the assessment, or name a step you would like to review.",
-  );
+  return stay(snapshot, assessmentAskAgainPrompt());
 }
 
 function onFailedRecoveryVoice(
@@ -840,6 +901,9 @@ function onFailedRecoveryVoice(
   ctx: AgentContext,
   intent: ParsedIntent,
 ): AgentReduceResult {
+  if (intent.type === "decline") {
+    return postponeAssessment(snapshot);
+  }
   const review = handleReviewIntent(snapshot, ctx, intent);
   if (review) return review;
   if (intent.type === "retake" || intent.type === "assessment") {
@@ -879,13 +943,13 @@ function onPostReviewVoice(
   if (intent.type === "rewatch" && snapshot.reviewStepNumber) {
     return beginReview(ctx, snapshot, snapshot.reviewStepNumber);
   }
+  if (intent.type === "decline") {
+    return postponeAssessment(snapshot);
+  }
   if (intent.type === "assessment" || intent.type === "confirm" || intent.type === "retake") {
     return result(snapshot, "", { type: "listen" }, false);
   }
-  return clarify(
-    snapshot,
-    "Say a step to review, or say you are ready for the assessment.",
-  );
+  return stay(snapshot, assessmentAskAgainPrompt());
 }
 
 export function wantsAssessmentStart(
@@ -893,7 +957,13 @@ export function wantsAssessmentStart(
   intent: ParsedIntent,
   ctx?: AgentContext,
 ): boolean {
-  if (intent.type === "exit" || intent.type === "empty" || intent.type === "replay") {
+  if (
+    intent.type === "exit" ||
+    intent.type === "empty" ||
+    intent.type === "replay" ||
+    intent.type === "decline" ||
+    intent.type === "unknown"
+  ) {
     return false;
   }
   if (snapshot.phase === "awaiting_assessment") {

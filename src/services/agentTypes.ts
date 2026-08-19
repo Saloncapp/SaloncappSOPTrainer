@@ -63,6 +63,7 @@ export type IntentType =
   | "review"
   | "exit"
   | "replay"
+  | "decline"
   | "unknown"
   | "empty";
 

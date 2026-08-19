@@ -152,8 +152,8 @@ test("video complete after a full watch asks about doubts first", () => {
   assert.equal(result.snapshot.navigationOffered, false);
   assert.equal(result.expectedInput, "doubt_or_navigate");
   assert.equal(result.action.type, "listen");
-  assert.match(result.spokenText, /ask a question/i);
-  assert.match(result.spokenText, /next video/i);
+  assert.match(result.spokenText, /ask doubts/i);
+  assert.match(result.spokenText, /next step/i);
   assert.doesNotMatch(result.spokenText, /assessment/i);
 });
 
@@ -349,11 +349,71 @@ test("voice cannot start assessment from welcome without watching", () => {
 test("assessment confirm and retake flags", () => {
   const awaiting = snap({ phase: "awaiting_assessment", currentStepNumber: 2 });
   assert.equal(wantsAssessmentStart(awaiting, { type: "confirm" }), true);
+  assert.equal(wantsAssessmentStart(awaiting, { type: "assessment" }), true);
   assert.equal(wantsAssessmentStart(awaiting, { type: "review", stepNumber: 1 }), false);
+  assert.equal(wantsAssessmentStart(awaiting, { type: "decline" }), false);
+  assert.equal(wantsAssessmentStart(awaiting, { type: "unknown", query: "hmm" }), false);
 
   const failed = snap({ phase: "failed_recovery", currentStepNumber: 2 });
   assert.equal(wantsAssessmentStart(failed, { type: "retake" }), true);
   assert.equal(wantsAssessmentStart(failed, { type: "review", query: "led" }), false);
+  assert.equal(wantsAssessmentStart(failed, { type: "decline" }), false);
+});
+
+test("declining the assessment offer postpones without starting", () => {
+  const awaiting = snap({ phase: "awaiting_assessment", currentStepNumber: 2 });
+  const context = ctx({
+    allStepsCompleted: true,
+    status: "ready_for_assessment",
+    completedStepNumbers: [1, 2],
+  });
+  const declined = reduceAgent(
+    awaiting,
+    { type: "voice", intent: { type: "decline" } },
+    context,
+  );
+  assert.equal(declined.snapshot.phase, "awaiting_assessment");
+  assert.equal(declined.action.type, "idle");
+  assert.equal(declined.expectedInput, "none");
+  assert.match(declined.spokenText, /continue later/i);
+  assert.equal(wantsAssessmentStart(declined.snapshot, { type: "decline" }, context), false);
+
+  const silentAfterDecline = reduceAgent(
+    declined.snapshot,
+    { type: "voice", intent: { type: "empty" } },
+    context,
+    declined.spokenText,
+  );
+  assert.equal(silentAfterDecline.action.type, "idle");
+  assert.notEqual(silentAfterDecline.action.type, "play_video");
+  assert.doesNotMatch(silentAfterDecline.spokenText, /i'll play/i);
+
+  const unclear = reduceAgent(
+    awaiting,
+    { type: "voice", intent: { type: "unknown", query: "maybe" } },
+    context,
+  );
+  assert.equal(unclear.snapshot.phase, "awaiting_assessment");
+  assert.equal(unclear.action.type, "listen");
+  assert.match(unclear.spokenText, /would you like to start the assessment now/i);
+});
+
+test("returning after postponed assessment resumes at the offer", () => {
+  const context = ctx({
+    allStepsCompleted: true,
+    status: "ready_for_assessment",
+    completedStepNumbers: [1, 2],
+  });
+  const resumed = bootstrap(
+    snap({ phase: "awaiting_assessment", currentStepNumber: 2 }),
+    context,
+  );
+  assert.equal(resumed.snapshot.phase, "awaiting_assessment");
+  assert.equal(resumed.action.type, "listen");
+  assert.match(resumed.spokenText, /welcome back/i);
+  assert.match(resumed.spokenText, /would you like to start it now/i);
+  assert.doesNotMatch(resumed.spokenText, /failed/i);
+  assert.equal(wantsAssessmentStart(resumed.snapshot, { type: "unknown" }, context), false);
 });
 
 test("pass and fail branch from assessment_finished", () => {
@@ -437,14 +497,55 @@ test("session resume during video does not speak", () => {
   assert.deepEqual(result.action, { type: "play_video", stepNumber: 1 });
 });
 
-test("empty and unknown utterances stay in phase", () => {
+test("empty and unknown utterances stay in phase without playing video", () => {
   const empty = voice({ type: "empty" });
   assert.equal(empty.snapshot.phase, "welcome");
-  assert.match(empty.spokenText, /can't get you|when you are ready/i);
+  assert.equal(empty.action.type, "listen");
+  assert.match(empty.spokenText, /can't get you/i);
+  assert.notEqual(empty.action.type, "play_video");
 
   const unknown = voice({ type: "unknown", query: "blue banana" });
   assert.equal(unknown.snapshot.phase, "welcome");
   assert.equal(unknown.action.type, "listen");
+  assert.match(unknown.spokenText, /can't get you/i);
+  assert.notEqual(unknown.action.type, "play_video");
+});
+
+test("empty welcome does not replay a video-start intro", () => {
+  const empty = reduceAgent(
+    welcome,
+    { type: "voice", intent: { type: "empty" } },
+    ctx(),
+    "Got it. I'll play the Step 1 training video now. Please watch carefully.",
+  );
+  assert.equal(empty.snapshot.phase, "welcome");
+  assert.equal(empty.action.type, "listen");
+  assert.match(empty.spokenText, /can't get you/i);
+  assert.doesNotMatch(empty.spokenText, /i'll play/i);
+});
+
+test("repeated empty replies speak one no-response prompt without concatenating", () => {
+  const first = voice({ type: "empty" });
+  assert.match(first.spokenText, /^I can't get you\./i);
+  assert.equal(first.spokenText.match(/can't get you/gi)?.length, 1);
+
+  const second = reduceAgent(
+    first.snapshot,
+    { type: "voice", intent: { type: "empty" } },
+    ctx(),
+    first.spokenText,
+  );
+  assert.equal(second.spokenText, first.spokenText);
+  assert.equal(second.spokenText.match(/can't get you/gi)?.length, 1);
+
+  const fourth = reduceAgent(
+    second.snapshot,
+    { type: "voice", intent: { type: "empty" } },
+    ctx(),
+    `I can't get you. I can't get you. I can't get you. ${first.spokenText}`,
+  );
+  assert.equal(fourth.spokenText, first.spokenText);
+  assert.equal(fourth.spokenText.match(/can't get you/gi)?.length, 1);
 });
 
 test("post_video silence repeats the navigation prompt without replaying video", () => {

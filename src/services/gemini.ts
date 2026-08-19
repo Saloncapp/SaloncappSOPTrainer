@@ -1,6 +1,7 @@
 import { GoogleGenAI } from "@google/genai";
 import { config } from "../config";
 import type { SopStep } from "../data/sops/types";
+import { looksLikeEmptyOrNoiseTranscript } from "./agentIntents";
 import {
   multilingualUnderstandingRule,
   type ResponseLanguage,
@@ -309,7 +310,8 @@ export async function transcribeSpeech(options: {
 Carefully transcribe what the HUMAN said in this audio.
 The speaker may use Tamil, English, Hindi, or mix those languages in the same utterance.
 Transcribe in the original languages used. Do not translate.
-If silence or noise only, transcript must be "".
+If silence, noise, or no human speech, transcript must be "" and emptyOrNoise must be true.
+Do not invent words such as yes, okay, start, thanks, or the previous prompt.
 Do not add extra words.
 
 Return JSON:
@@ -322,9 +324,7 @@ Return JSON:
 
   const transcript = String(parsed.transcript || "").trim();
   const emptyOrNoise =
-    Boolean(parsed.emptyOrNoise) ||
-    transcript.length === 0 ||
-    (/^[a-zA-Z0-9+\s]+$/.test(transcript) && transcript.length < 3);
+    Boolean(parsed.emptyOrNoise) || looksLikeEmptyOrNoiseTranscript(transcript);
   return { transcript, emptyOrNoise };
 }
 
@@ -481,6 +481,7 @@ export type GeminiAgentIntent = {
     | "review"
     | "exit"
     | "replay"
+    | "decline"
     | "unknown";
   stepNumber: number | null;
   confidence: number;
@@ -516,7 +517,12 @@ Staff said: ${JSON.stringify(options.transcript)}
 
 Classify the staff utterance for a voice training tutor.
 The staff may speak Tamil, English, Hindi, or mix them in one sentence. Classify by meaning, not by which language they used.
-Valid intents: confirm, next, rewatch, assessment, retake, review, exit, replay, unknown.
+Valid intents: confirm, next, rewatch, assessment, retake, review, exit, replay, decline, unknown.
+If expected reply type is assessment_confirm, review_or_assessment, or retake_or_review:
+- Use assessment or confirm only for an explicit positive (yes, ready, start the assessment, okay begin, ஆம், ஆமாம், हाँ).
+- Use decline for a negative or delay (no, not yet, not now, don't start, wait, later, I'm not ready, இல்லை, வேண்டாம், नहीं).
+- Do NOT treat a negative answer as confirm or assessment just because the tutor asked whether to start.
+- If the answer is unclear or mixed, use unknown with confidence below 0.5.
 If they are asking a question or expressing a doubt about a product, method, or step, use intent=unknown (the tutor will answer the doubt). Do NOT use review unless they clearly asked to play or watch that step's video.
 If they name a step only to ask about it, intent=unknown.
 If they clearly ask to play/watch/go to a step, intent=review and the matching stepNumber.
@@ -547,6 +553,7 @@ Return JSON:
     "review",
     "exit",
     "replay",
+    "decline",
     "unknown",
   ];
   const intent = allowed.includes(parsed.intent as GeminiAgentIntent["intent"])

@@ -49,6 +49,15 @@ test("welcome confirmations map to confirm", () => {
   }
 });
 
+test("silence, fillers, and garbled welcome speech stay empty", () => {
+  for (const phrase of ["", "  ", "um", "uh", "hmm", "ah", "mm"]) {
+    assert.equal(parseRuleIntent(phrase, "confirm").type, "empty", phrase);
+  }
+  assert.equal(parseRuleIntent("ok", "confirm").type, "confirm");
+  assert.equal(parseRuleIntent("foamy gel cleanser", "confirm").type, "unknown");
+  assert.equal(parseRuleIntent("play step 1", "confirm").type, "review");
+});
+
 test("post-video ok means next, watch again means rewatch", () => {
   assert.equal(parseRuleIntent("ok", "next_or_rewatch").type, "next");
   assert.equal(parseRuleIntent("move on", "next_or_rewatch").type, "next");
@@ -82,9 +91,36 @@ test("post-video doubt phase recognizes no doubts and questions", () => {
 
 test("assessment confirm and retake intents", () => {
   assert.equal(parseRuleIntent("yes", "assessment_confirm").type, "assessment");
+  assert.equal(parseRuleIntent("yes, start", "assessment_confirm").type, "assessment");
+  assert.equal(parseRuleIntent("I'm ready", "assessment_confirm").type, "assessment");
+  assert.equal(parseRuleIntent("let's start", "assessment_confirm").type, "assessment");
+  assert.equal(parseRuleIntent("start the assessment", "assessment_confirm").type, "assessment");
+  assert.equal(parseRuleIntent("okay, begin", "assessment_confirm").type, "assessment");
   assert.equal(parseRuleIntent("take the assessment", "assessment_confirm").type, "assessment");
+  assert.equal(parseRuleIntent("ஆம்", "assessment_confirm").type, "assessment");
+  assert.equal(parseRuleIntent("ஆமாம்", "assessment_confirm").type, "assessment");
+  assert.equal(parseRuleIntent("हाँ", "assessment_confirm").type, "assessment");
   assert.equal(parseRuleIntent("retake", "retake_or_review").type, "retake");
   assert.equal(parseRuleIntent("try again", "review_or_assessment").type, "assessment");
+});
+
+test("assessment offer negatives are decline, not start", () => {
+  for (const phrase of [
+    "No",
+    "Not now",
+    "Not yet",
+    "Don't start",
+    "I don't want to",
+    "Wait",
+    "Later",
+    "I'm not ready",
+    "இல்லை",
+    "வேண்டாம்",
+    "नहीं",
+  ]) {
+    assert.equal(parseRuleIntent(phrase, "assessment_confirm").type, "decline", phrase);
+  }
+  assert.equal(parseRuleIntent("maybe", "assessment_confirm").type, "unknown");
 });
 
 test("assessment answers are not treated as confirmations", () => {

@@ -26,7 +26,13 @@ import {
   transcribeSpeech,
   localizeTrainerSpeech,
 } from "./gemini";
-import { looksLikeStepNavigation, matchSteps, parseRuleIntent } from "./agentIntents";
+import {
+  looksLikeDecline,
+  looksLikeEmptyOrNoiseTranscript,
+  looksLikeStepNavigation,
+  matchSteps,
+  parseRuleIntent,
+} from "./agentIntents";
 import {
   bootstrap,
   expectedInputFor,
@@ -123,6 +129,8 @@ function applyResult(session: IAgentSession, reduced: AgentReduceResult): void {
   }
   if (reduced.snapshot.phase === "passed") {
     session.status = "completed";
+  } else if (reduced.action.type === "idle") {
+    session.status = "abandoned";
   } else {
     session.status = "active";
   }
@@ -332,7 +340,22 @@ async function resolveIntent(options: {
 
   const ruleIntent = parseRuleIntent(transcript, expectedInput);
   if (ruleIntent.type === "empty") return ruleIntent;
-  if (ruleIntent.type === "replay" || ruleIntent.type === "exit") return ruleIntent;
+  if (
+    ruleIntent.type === "replay" ||
+    ruleIntent.type === "exit" ||
+    ruleIntent.type === "decline"
+  ) {
+    return ruleIntent;
+  }
+  if (
+    looksLikeDecline(transcript) &&
+    (expectedInput === "assessment_confirm" ||
+      expectedInput === "review_or_assessment" ||
+      expectedInput === "retake_or_review") &&
+    ruleIntent.type !== "review"
+  ) {
+    return { type: "decline", query: transcript };
+  }
 
   if (ruleIntent.type === "review") {
     const matched = matchSteps(ruleIntent.query || transcript, steps);
@@ -424,6 +447,9 @@ async function resolveIntent(options: {
     });
     if (gemini.confidence < 0.5 || gemini.intent === "unknown") {
       return { type: "unknown", query: transcript };
+    }
+    if (gemini.intent === "decline") {
+      return { type: "decline", query: transcript };
     }
     if (gemini.intent === "review") {
       const matched = matchSteps(transcript, steps);
@@ -656,7 +682,7 @@ export async function submitAgentTurn(options: {
       audioBase64: options.audioBase64,
       mimeType: options.mimeType,
     });
-    if (stt.emptyOrNoise) {
+    if (stt.emptyOrNoise || looksLikeEmptyOrNoiseTranscript(stt.transcript)) {
       const reduced = reduceAgent(
         snapshotFromSession(session),
         { type: "voice", intent: { type: "empty" } },
@@ -682,7 +708,7 @@ export async function submitAgentTurn(options: {
   }
 
   const snapshot = snapshotFromSession(session);
-  const intent = await resolveIntent({
+  let intent = await resolveIntent({
     transcript,
     expectedInput: expectedInputForSnapshot(snapshot),
     training,
@@ -740,7 +766,17 @@ export async function submitAgentTurn(options: {
     return serializeTurn({ session, training, progress, reduced });
   }
 
-  if (wantsAssessmentStart(snapshot, intent, ctx)) {
+  if (
+    looksLikeDecline(transcript) &&
+    (snapshot.phase === "awaiting_assessment" ||
+      snapshot.phase === "post_review" ||
+      snapshot.phase === "failed_recovery") &&
+    intent.type !== "review"
+  ) {
+    intent = { type: "decline", query: transcript };
+  }
+
+  if (wantsAssessmentStart(snapshot, intent, ctx) && !looksLikeDecline(transcript)) {
     const started = await maybeStartAssessment({
       auth: options.auth,
       training,

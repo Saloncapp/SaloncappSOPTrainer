@@ -55,6 +55,12 @@ const STOP_WORDS = new Set([
 
 const CONFIRM_RE =
   /\b(ok|okay|okey|yes|yeah|yep|yup|sure|start|begin|go ahead|lets go|let s go|proceed|continue|alright|all right|ready)\b/;
+const DECLINE_RE =
+  /\b(no|nope|nah|not now|not yet|not ready|not today|not right now|do not start|don t start|dont start|do not want|don t want|dont want|wait|later|hold on|hold up|maybe later)\b/;
+const TA_CONFIRM_RE = /ஆம்|ஆமாம்|சரி|ஆரம்பி|தொடங்கு|தயார்/;
+const TA_DECLINE_RE = /இல்லை|வேண்டாம்|வேணாம்/;
+const HI_CONFIRM_RE = /हाँ|हां|जी हाँ|जी हां|ठीक|शुरू|तैयार/;
+const HI_DECLINE_RE = /नहीं|नही|अभी नहीं|नहीं चाहिए|बाद में/;
 const NEXT_RE =
   /\b(next|continue|move on|move to next|go to next|go ahead|proceed|skip)\b/;
 const REWATCH_RE =
@@ -74,6 +80,19 @@ const NO_DOUBT_RE =
   /\b(no doubt|no doubts|no question|no questions|all clear|got it|understood|nothing else|that's clear|thats clear|i'm good|im good|clear|no thanks|nothing|no more questions)\b/;
 const QUESTION_RE =
   /\b(what|why|how|when|where|can|should|is|are|does|do|could|would|explain|tell me|mean|difference)\b/;
+const FILLER_ONLY_RE = /^(um+|uh+|er+|ah+|oh+|hmm+|mm+|mhm+|huh+|eh+|ha+|hm+)$/;
+
+export function looksLikeEmptyOrNoiseTranscript(transcript: string): boolean {
+  const original = String(transcript || "").trim();
+  if (!original) return true;
+  const text = normalizeText(original);
+  if (!text) return true;
+  if (hasNonLatinScript(original)) return false;
+  const compact = text.replace(/\s+/g, "");
+  if (compact.length < 2) return true;
+  if (FILLER_ONLY_RE.test(text)) return true;
+  return false;
+}
 
 export function extractStepNumber(text: string): number | null {
   const match = normalizeText(text).match(/\bstep\s+(\d{1,2})\b/);
@@ -108,6 +127,31 @@ export function hasNonLatinScript(transcript: string): boolean {
   return /[\u0B80-\u0BFF\u0900-\u097F]/.test(String(transcript || ""));
 }
 
+function isAssessmentOfferInput(expectedInput: ExpectedInput): boolean {
+  return (
+    expectedInput === "assessment_confirm" ||
+    expectedInput === "review_or_assessment" ||
+    expectedInput === "retake_or_review"
+  );
+}
+
+export function looksLikeDecline(transcript: string): boolean {
+  const original = String(transcript || "").trim();
+  if (!original) return false;
+  if (TA_DECLINE_RE.test(original) || HI_DECLINE_RE.test(original)) return true;
+  const text = normalizeText(original);
+  return Boolean(text) && DECLINE_RE.test(text);
+}
+
+export function looksLikeAssessmentConfirm(transcript: string): boolean {
+  if (looksLikeDecline(transcript)) return false;
+  const original = String(transcript || "").trim();
+  if (!original) return false;
+  if (TA_CONFIRM_RE.test(original) || HI_CONFIRM_RE.test(original)) return true;
+  const text = normalizeText(original);
+  return Boolean(text) && (hasWord(text, CONFIRM_RE) || hasWord(text, ASSESSMENT_RE));
+}
+
 export function parseRuleIntent(
   transcript: string,
   expectedInput: ExpectedInput,
@@ -118,12 +162,18 @@ export function parseRuleIntent(
   }
   const text = normalizeText(transcript);
   const nativeScript = hasNonLatinScript(original);
+  if (looksLikeEmptyOrNoiseTranscript(original) && !nativeScript) {
+    return { type: "empty" };
+  }
   if ((!text || text.length < 2) && !nativeScript) {
     return { type: "empty" };
   }
 
   if (text && hasWord(text, REPLAY_RE)) {
     return { type: "replay" };
+  }
+  if (isAssessmentOfferInput(expectedInput) && looksLikeDecline(original)) {
+    return { type: "decline" };
   }
   if (text && hasWord(text, EXIT_RE)) {
     return { type: "exit" };
@@ -187,7 +237,7 @@ export function parseRuleIntent(
   }
 
   if (expectedInput === "assessment_confirm") {
-    if (hasWord(text, ASSESSMENT_RE) || hasWord(text, CONFIRM_RE)) {
+    if (looksLikeAssessmentConfirm(original)) {
       return { type: "assessment" };
     }
     if (hasWord(text, REWATCH_RE) && !stepNumber && !looksLikeReviewRequest(text)) {
@@ -210,7 +260,7 @@ export function parseRuleIntent(
   }
 
   if (expectedInput === "review_or_assessment") {
-    if (hasWord(text, ASSESSMENT_RE) || hasWord(text, CONFIRM_RE) || hasWord(text, RETAKE_RE)) {
+    if (looksLikeAssessmentConfirm(original) || hasWord(text, RETAKE_RE)) {
       return { type: "assessment" };
     }
     if (hasWord(text, REWATCH_RE) && !stepNumber && !looksLikeReviewRequest(text)) {
@@ -226,7 +276,7 @@ export function parseRuleIntent(
     if (hasWord(text, CONFIRM_RE) || hasWord(text, NEXT_RE) || hasWord(text, ASSESSMENT_RE)) {
       return { type: "confirm" };
     }
-    if (stepNumber || looksLikeReviewRequest(text)) {
+    if (stepNumber || hasWord(text, REVIEW_RE) || hasWord(text, PREVIOUS_RE)) {
       return { type: "review", query: transcript, stepNumber };
     }
     return { type: "unknown", query: transcript };
