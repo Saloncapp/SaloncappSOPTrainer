@@ -1,0 +1,201 @@
+name: Deploy SOP Trainer
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+      - preprod
+      - production
+  workflow_dispatch:
+
+concurrency:
+  group: sop-trainer-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  deploy:
+    name: Deploy
+    needs: validate
+    if: github.ref_name == 'dev' || github.ref_name == 'preprod' || github.ref_name == 'production'
+    runs-on: ubuntu-latest
+    environment:
+      name: >-
+        ${{
+          github.ref_name == 'production' && 'production' ||
+          github.ref_name == 'preprod' && 'preprod' ||
+          'development'
+        }}
+
+    env:
+      SSH_HOST: >-
+        ${{
+          github.ref_name == 'dev' && secrets.DEV_HOST ||
+          github.ref_name == 'preprod' && secrets.PREPROD_HOST ||
+          secrets.PRODUCTION_HOST
+        }}
+      SSH_USER: >-
+        ${{
+          github.ref_name == 'dev' && secrets.DEV_USER ||
+          github.ref_name == 'preprod' && secrets.PREPROD_USER ||
+          secrets.PRODUCTION_USER
+        }}
+      SSH_KEY: >-
+        ${{
+          github.ref_name == 'dev' && secrets.DEV_SSH_KEY ||
+          github.ref_name == 'preprod' && secrets.PREPROD_SSH_KEY ||
+          secrets.PRODUCTION_SSH_KEY
+        }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate deploy secrets
+        env:
+          SSH_HOST: ${{ env.SSH_HOST }}
+          SSH_USER: ${{ env.SSH_USER }}
+          SSH_KEY: ${{ env.SSH_KEY }}
+        run: |
+          set -euo pipefail
+          ENV_NAME="${{ github.ref_name == 'production' && 'production' || github.ref_name == 'preprod' && 'preprod' || 'development' }}"
+          missing=()
+          for key in SSH_HOST SSH_USER SSH_KEY; do
+            if [ -z "${!key}" ]; then
+              missing+=("$key")
+            fi
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing in GitHub environment '$ENV_NAME': ${missing[*]}"
+            echo "Add them at: Settings -> Environments -> $ENV_NAME -> Environment secrets"
+            exit 1
+          fi
+          echo "Deploy secrets present for $ENV_NAME"
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Prune dev dependencies
+        run: npm prune --omit=dev
+
+      - name: Create release artifact
+        run: |
+          set -euo pipefail
+          RELEASE_NAME="saloncapp-sop-trainer-${{ github.sha }}"
+          STAGING="/tmp/${RELEASE_NAME}"
+          mkdir -p "${STAGING}"
+          cp -r \
+            dist \
+            node_modules \
+            ecosystem.config.js \
+            package.json \
+            package-lock.json \
+            .nvmrc \
+            "${STAGING}/"
+          tar -czf "release-${{ github.sha }}.tar.gz" -C /tmp "${RELEASE_NAME}"
+
+      - name: Upload artifact to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ env.SSH_HOST }}
+          username: ${{ env.SSH_USER }}
+          key: ${{ env.SSH_KEY }}
+          source: release-${{ github.sha }}.tar.gz
+          target: ~/SaloncappSOPTrainer/releases/
+
+      - name: Activate release on server
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ env.SSH_HOST }}
+          username: ${{ env.SSH_USER }}
+          key: ${{ env.SSH_KEY }}
+          script: |
+            set -euo pipefail
+
+            APP_ROOT="$HOME/SaloncappSOPTrainer"
+            APP_NAME="saloncapp-sop-trainer"
+            RELEASE_ID="${{ github.sha }}"
+            ARCHIVE="$APP_ROOT/releases/release-${RELEASE_ID}.tar.gz"
+            RELEASE_DIR="$APP_ROOT/releases/${APP_NAME}-${RELEASE_ID}"
+
+            export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+            if [ -s "$NVM_DIR/nvm.sh" ]; then
+              . "$NVM_DIR/nvm.sh"
+              nvm use --silent 20.19.4 2>/dev/null || nvm use --silent default 2>/dev/null || true
+            fi
+            export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:/usr/local/bin:$PATH"
+            command -v pm2 >/dev/null || { echo "ERROR: pm2 not found. Run: npm install -g pm2"; exit 1; }
+
+            mkdir -p "$APP_ROOT/releases" "$APP_ROOT/shared/logs"
+
+            if [ ! -f "$APP_ROOT/shared/.env" ]; then
+              echo "ERROR: Missing $APP_ROOT/shared/.env"
+              exit 1
+            fi
+
+            rm -rf "$RELEASE_DIR"
+            mkdir -p "$RELEASE_DIR"
+            tar -xzf "$ARCHIVE" -C "$RELEASE_DIR" --strip-components=1
+
+            ln -sfn "$APP_ROOT/shared/.env" "$RELEASE_DIR/.env"
+            ln -sfn "$APP_ROOT/shared/logs" "$RELEASE_DIR/logs"
+            ln -sfn "$RELEASE_DIR" "$APP_ROOT/current"
+
+            cd "$APP_ROOT/current"
+            pm2 startOrReload ecosystem.config.js --update-env
+
+            HEALTH_PORT="$(awk -F= 'BEGIN { port="4010" } /^[[:space:]]*PORT=/ { value=$0; sub(/^[^=]*=/, "", value); gsub(/^[[:space:]]+|[[:space:]]+$/, "", value); if (value != "") port=value } END { print port }' "$APP_ROOT/shared/.env")"
+            HEALTH_URL="http://127.0.0.1:${HEALTH_PORT}/health"
+
+            for attempt in 1 2 3 4 5; do
+              echo "Checking ${HEALTH_URL} (attempt ${attempt}/5)..."
+              if curl -fsS --max-time 5 "$HEALTH_URL"; then
+                echo "SOP Trainer health check passed"
+                pm2 save
+                rm -f "$ARCHIVE"
+                cd "$APP_ROOT/releases"
+                ls -dt ${APP_NAME}-* 2>/dev/null | tail -n +6 | xargs -r rm -rf
+                pm2 status
+                exit 0
+              fi
+              sleep 5
+            done
+
+            echo "::error::SOP Trainer health check failed after deploy"
+            pm2 logs "$APP_NAME" --lines 80 --nostream || true
+            exit 1

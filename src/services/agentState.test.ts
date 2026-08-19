@@ -152,8 +152,8 @@ test("video complete after a full watch asks about doubts first", () => {
   assert.equal(result.snapshot.navigationOffered, false);
   assert.equal(result.expectedInput, "doubt_or_navigate");
   assert.equal(result.action.type, "listen");
-  assert.match(result.spokenText, /ask doubts/i);
-  assert.match(result.spokenText, /next step/i);
+  assert.match(result.spokenText, /ask (me|a question)/i);
+  assert.match(result.spokenText, /next video/i);
   assert.doesNotMatch(result.spokenText, /assessment/i);
 });
 
