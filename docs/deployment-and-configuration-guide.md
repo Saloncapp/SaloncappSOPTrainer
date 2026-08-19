@@ -161,8 +161,6 @@ server {
 
     ssl_certificate      /etc/letsencrypt/live/saloonstaff.in/fullchain.pem;
     ssl_certificate_key  /etc/letsencrypt/live/saloonstaff.in/privkey.pem;
-    include              /etc/letsencrypt/options-ssl-nginx.conf;
-    ssl_dhparam          /etc/letsencrypt/ssl-dhparams.pem;
 
     client_max_body_size 20m;
 
@@ -240,8 +238,6 @@ server {
 
     ssl_certificate      /etc/letsencrypt/live/saloonstaff.com/fullchain.pem;
     ssl_certificate_key  /etc/letsencrypt/live/saloonstaff.com/privkey.pem;
-    include              /etc/letsencrypt/options-ssl-nginx.conf;
-    ssl_dhparam          /etc/letsencrypt/ssl-dhparams.pem;
 
     client_max_body_size 20m;
 
@@ -280,8 +276,6 @@ server {
 
     ssl_certificate      /etc/letsencrypt/live/saloonstaff.in/fullchain.pem;
     ssl_certificate_key  /etc/letsencrypt/live/saloonstaff.in/privkey.pem;
-    include              /etc/letsencrypt/options-ssl-nginx.conf;
-    ssl_dhparam          /etc/letsencrypt/ssl-dhparams.pem;
 
     client_max_body_size 20m;
 
