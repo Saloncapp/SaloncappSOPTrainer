@@ -130,7 +130,7 @@ function applyResult(session: IAgentSession, reduced: AgentReduceResult): void {
   } else if (reduced.spokenText) {
     session.lastSpokenText = reduced.spokenText;
   }
-  if (reduced.snapshot.phase === "passed") {
+  if (reduced.snapshot.phase === "passed" && reduced.action.type !== "listen" && reduced.action.type !== "play_video") {
     session.status = "completed";
   } else if (reduced.action.type === "idle") {
     session.status = "abandoned";
@@ -263,6 +263,41 @@ async function getActiveAttempt(
   return expired;
 }
 
+function repairSessionAfterAssessment(
+  session: IAgentSession,
+  progress: IStaffTrainingProgress,
+): boolean {
+  const watchingVideo =
+    session.phase === "playing_video" ||
+    session.phase === "playing_review" ||
+    session.phase === "post_review" ||
+    session.phase === "post_video";
+  let changed = false;
+  if (progress.status === "passed") {
+    if (!watchingVideo && session.phase !== "passed") {
+      session.phase = "passed";
+      changed = true;
+    }
+    if (session.phase === "passed" && session.expectedInput !== "doubt_or_navigate") {
+      session.expectedInput = "doubt_or_navigate";
+      changed = true;
+    }
+  } else if (progress.status === "failed_retraining") {
+    if (!watchingVideo && session.phase !== "failed_recovery") {
+      session.phase = "failed_recovery";
+      changed = true;
+    }
+    if (
+      session.phase === "failed_recovery" &&
+      session.expectedInput !== "retake_or_review"
+    ) {
+      session.expectedInput = "retake_or_review";
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 async function getOrCreateSession(
   auth: StaffAuth,
   training: SopDefinition,
@@ -324,6 +359,9 @@ async function getOrCreateSession(
   }
   if (session.status === "abandoned") {
     session.status = "active";
+    changed = true;
+  }
+  if (repairSessionAfterAssessment(session, progress)) {
     changed = true;
   }
   if (changed) await session.save();
@@ -547,13 +585,40 @@ export async function startOrResumeAgentSession(options: {
   const progress = await getOrCreateProgress(options.auth, training);
   const session = await getOrCreateSession(options.auth, training, progress);
   applySessionLanguage(session, options.responseLanguage);
+  repairSessionAfterAssessment(session, progress);
   const ctx = buildContext(training, progress, session.currentStepNumber);
 
+  if (progress.status === "passed" || progress.status === "failed_retraining") {
+    const entrySnapshot = reconcileForServiceEntry(snapshotFromSession(session), ctx);
+    session.phase = entrySnapshot.phase;
+    session.currentStepNumber = entrySnapshot.currentStepNumber;
+    session.reviewStepNumber = entrySnapshot.reviewStepNumber;
+    session.navigationOffered = entrySnapshot.navigationOffered;
+    if (session.status === "abandoned" || session.status === "completed") {
+      session.status = "active";
+    }
+    const entryCtx = buildContext(training, progress, entrySnapshot.currentStepNumber);
+    const reduced = reduceAgent(entrySnapshot, { type: "bootstrap" }, entryCtx, "");
+    applyResult(session, reduced);
+    await session.save();
+    const attemptState = await getActiveAttempt(progress, options.auth, training);
+    return serializeTurn({
+      session,
+      training,
+      progress,
+      reduced,
+      assessment: attemptState?.attempt ? serializeAttempt(attemptState.attempt) : null,
+    });
+  }
+
   const attemptState = await getActiveAttempt(progress, options.auth, training);
+  const stillInLiveAssessment =
+    session.phase === "in_assessment" &&
+    progress.status === "in_assessment";
   const completedDuringAssessment =
-    Boolean(attemptState?.attempt?.completedAt) &&
-    (session.phase === "in_assessment" || session.expectedInput === "assessment_answer");
-  if (attemptState?.expired || completedDuringAssessment) {
+    stillInLiveAssessment &&
+    Boolean(attemptState?.attempt?.completedAt || attemptState?.expired);
+  if ((attemptState?.expired && stillInLiveAssessment) || completedDuringAssessment) {
     const reduced = reduceAgent(
       snapshotFromSession(session),
       {
@@ -636,6 +701,7 @@ export async function submitAgentTurn(options: {
   const training = findTrainingOrThrow(options.trainingId);
   let progress = await getOrCreateProgress(options.auth, training);
   const session = await getOrCreateSession(options.auth, training, progress);
+  repairSessionAfterAssessment(session, progress);
   applySessionLanguage(session, options.responseLanguage);
   let ctx = buildContext(training, progress, session.currentStepNumber);
 
@@ -679,7 +745,7 @@ export async function submitAgentTurn(options: {
     ctx = buildContext(training, progress, session.currentStepNumber);
   }
 
-  if (session.expectedInput === "assessment_answer" || session.phase === "in_assessment") {
+  if (session.phase === "in_assessment" && progress.status === "in_assessment") {
     const attemptState = await getActiveAttempt(progress, options.auth, training);
     if (attemptState?.expired || attemptState?.attempt?.completedAt) {
       const reduced = reduceAgent(
@@ -735,7 +801,7 @@ export async function submitAgentTurn(options: {
     transcript = stt.transcript;
   }
 
-  if (session.expectedInput === "assessment_answer" || session.phase === "in_assessment") {
+  if (session.phase === "in_assessment" && progress.status === "in_assessment") {
     return handleAssessmentTurn({
       auth: options.auth,
       training,
@@ -747,15 +813,23 @@ export async function submitAgentTurn(options: {
   }
 
   const snapshot = snapshotFromSession(session);
+  const expectedInput =
+    progress.status === "passed" &&
+    snapshot.phase !== "playing_video" &&
+    snapshot.phase !== "playing_review"
+      ? "doubt_or_navigate"
+      : expectedInputForSnapshot(snapshot);
   let intent = await resolveIntent({
     transcript,
-    expectedInput: expectedInputForSnapshot(snapshot),
+    expectedInput,
     training,
   });
 
-  const expectedInput = expectedInputForSnapshot(snapshot);
   const shouldAnswerDoubt =
-    expectedInput === "doubt_or_navigate" &&
+    (expectedInput === "doubt_or_navigate" ||
+      expectedInput === "retake_or_review" ||
+      snapshot.phase === "passed" ||
+      snapshot.phase === "failed_recovery") &&
     !looksLikeStepNavigation(transcript) &&
     (intent.type === "doubt" ||
       (intent.type === "unknown" && transcript.trim().length >= 4));
@@ -815,7 +889,7 @@ export async function submitAgentTurn(options: {
     intent = { type: "decline", query: transcript };
   }
 
-  if (wantsAssessmentStart(snapshot, intent, ctx) && !looksLikeDecline(transcript)) {
+  if (wantsAssessmentStart(snapshot, intent, ctx) && !looksLikeDecline(transcript) && progress.status !== "passed") {
     const started = await maybeStartAssessment({
       auth: options.auth,
       training,
@@ -1051,6 +1125,19 @@ export async function completeAgentVideo(options: {
 
   if (options.stepNumber !== expectedStep) {
     throw httpError("Video completion does not match the current step.", 400);
+  }
+
+  if (progress.status === "passed") {
+    const ctx = buildContext(training, progress, options.stepNumber);
+    const reduced = reduceAgent(
+      snapshotFromSession(session),
+      { type: "video_complete", stepNumber: options.stepNumber },
+      ctx,
+      session.lastSpokenText,
+    );
+    applyResult(session, reduced);
+    await session.save();
+    return serializeTurn({ session, training, progress, reduced });
   }
 
   let reconciled = await reconcilePrerequisiteSteps({

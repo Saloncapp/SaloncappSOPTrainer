@@ -152,6 +152,11 @@ test("assessment confirm and retake intents", () => {
   assert.equal(parseRuleIntent("हाँ", "assessment_confirm").type, "assessment");
   assert.equal(parseRuleIntent("retake", "retake_or_review").type, "retake");
   assert.equal(parseRuleIntent("try again", "review_or_assessment").type, "assessment");
+  assert.equal(
+    parseRuleIntent("what is the mixing ratio for this step", "retake_or_review").type,
+    "doubt",
+  );
+  assert.equal(parseRuleIntent("play step 2", "retake_or_review").type, "review");
 });
 
 test("assessment offer negatives are decline, not start", () => {
@@ -182,6 +187,10 @@ test("step number and concept queries become review", () => {
   const numbered = parseRuleIntent("play step 7", "retake_or_review");
   assert.equal(numbered.type, "review");
   assert.equal(numbered.stepNumber, 7);
+
+  const goTo = parseRuleIntent("go to step 2", "doubt_or_navigate");
+  assert.equal(goTo.type, "review");
+  assert.equal(goTo.stepNumber, 2);
 
   const concept = parseRuleIntent("show me the led mask", "retake_or_review");
   assert.equal(concept.type, "review");

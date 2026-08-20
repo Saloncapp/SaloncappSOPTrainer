@@ -624,7 +624,10 @@ test("pass and fail branch from assessment_finished", () => {
     ctx({ allStepsCompleted: true, status: "passed", completedStepNumbers: [1, 2] }),
   );
   assert.equal(passed.snapshot.phase, "passed");
-  assert.equal(passed.action.type, "show_result");
+  assert.equal(passed.action.type, "listen");
+  assert.equal(passed.expectedInput, "doubt_or_navigate");
+  assert.match(passed.spokenText, /passed/i);
+  assert.match(passed.spokenText, /cannot be taken again|rewatch/i);
 
   const failed = reduceAgent(
     assessing,
@@ -634,6 +637,99 @@ test("pass and fail branch from assessment_finished", () => {
   assert.equal(failed.snapshot.phase, "failed_recovery");
   assert.equal(failed.action.type, "listen");
   assert.match(failed.spokenText, /retake|review/i);
+});
+
+test("passed staff can review a step but cannot retake", () => {
+  const passedSnap = snap({ phase: "passed", currentStepNumber: 2 });
+  const passedCtx = ctx({
+    allStepsCompleted: true,
+    status: "passed",
+    completedStepNumbers: [1, 2],
+  });
+  const retake = reduceAgent(
+    passedSnap,
+    { type: "voice", intent: { type: "retake" } },
+    passedCtx,
+  );
+  assert.equal(retake.snapshot.phase, "passed");
+  assert.equal(retake.action.type, "listen");
+  assert.match(retake.spokenText, /cannot be taken again/i);
+  assert.equal(wantsAssessmentStart(passedSnap, { type: "retake" }, passedCtx), false);
+  assert.equal(wantsAssessmentStart(passedSnap, { type: "assessment" }, passedCtx), false);
+
+  const review = reduceAgent(
+    passedSnap,
+    { type: "voice", intent: { type: "review", stepNumber: 1, query: "play step 1", confidence: 1 } },
+    passedCtx,
+  );
+  assert.equal(review.snapshot.phase, "playing_review");
+  assert.deepEqual(review.action, { type: "play_video", stepNumber: 1 });
+
+  const after = reduceAgent(
+    review.snapshot,
+    { type: "video_complete", stepNumber: 1 },
+    passedCtx,
+  );
+  assert.equal(after.snapshot.phase, "post_review");
+  assert.equal(after.action.type, "listen");
+  assert.doesNotMatch(after.spokenText, /ready for the assessment|start the assessment|retake/i);
+
+  const tryAgain = reduceAgent(
+    after.snapshot,
+    { type: "voice", intent: { type: "assessment" } },
+    passedCtx,
+  );
+  assert.notEqual(tryAgain.action.type, "idle");
+  assert.match(tryAgain.spokenText, /cannot be taken again/i);
+  assert.equal(wantsAssessmentStart(after.snapshot, { type: "assessment" }, passedCtx), false);
+});
+
+test("reopening a passed training listens and does not repeat the pass score", () => {
+  const passedCtx = ctx({
+    allStepsCompleted: true,
+    status: "passed",
+    completedStepNumbers: [1, 2],
+  });
+  const opened = bootstrap(snap({ phase: "passed", currentStepNumber: 2 }), passedCtx);
+  assert.equal(opened.action.type, "listen");
+  assert.match(opened.spokenText, /already complete/i);
+  assert.doesNotMatch(opened.spokenText, /well done/i);
+
+  const empty = reduceAgent(
+    opened.snapshot,
+    { type: "voice", intent: { type: "empty" } },
+    passedCtx,
+    "Well done. You passed the HydraFacial assessment with 90 percent. Training is complete.",
+  );
+  assert.equal(empty.action.type, "listen");
+  assert.doesNotMatch(empty.spokenText, /well done/i);
+
+  const play = reduceAgent(
+    opened.snapshot,
+    { type: "voice", intent: { type: "review", query: "go to step 2", stepNumber: 2 } },
+    passedCtx,
+  );
+  assert.deepEqual(play.action, { type: "play_video", stepNumber: 2 });
+
+  const replayed = reduceAgent(
+    opened.snapshot,
+    { type: "replay" },
+    passedCtx,
+    "Well done. You passed the HydraFacial assessment with 90 percent. Training is complete.",
+  );
+  assert.equal(replayed.action.type, "listen");
+  assert.doesNotMatch(replayed.spokenText, /well done/i);
+});
+
+test("reopening a failed training listens for retake or review", () => {
+  const failedCtx = ctx({
+    allStepsCompleted: true,
+    status: "failed_retraining",
+    completedStepNumbers: [1, 2],
+  });
+  const opened = bootstrap(snap({ phase: "failed_recovery", currentStepNumber: 2 }), failedCtx);
+  assert.equal(opened.action.type, "listen");
+  assert.match(opened.spokenText, /did not pass|retake/i);
 });
 
 test("targeted review asks about doubts then offers assessment navigation", () => {

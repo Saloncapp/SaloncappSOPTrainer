@@ -440,8 +440,17 @@ export function parseRuleIntent(
     if (hasWord(text, RETAKE_RE) || hasWord(text, ASSESSMENT_RE)) {
       return { type: "retake" };
     }
+    if (hasWord(text, REWATCH_RE) && !stepNumber && !looksLikeReviewRequest(text)) {
+      return { type: "rewatch" };
+    }
+    if (looksLikeNextUtterance(original, text) && !looksLikeQuestion(original)) {
+      return { type: "next" };
+    }
     if (stepNumber || looksLikeReviewRequest(text) || hasWord(text, REVIEW_RE)) {
       return { type: "review", query: transcript, stepNumber };
+    }
+    if (looksLikeQuestion(original) || text.includes("?") || QUESTION_RE.test(text) || text.split(" ").length >= 5) {
+      return { type: "doubt", query: transcript };
     }
     return { type: "unknown", query: transcript };
   }
@@ -455,6 +464,9 @@ export function parseRuleIntent(
     }
     if (stepNumber || looksLikeReviewRequest(text) || hasWord(text, REVIEW_RE)) {
       return { type: "review", query: transcript, stepNumber };
+    }
+    if (looksLikeQuestion(original) || text.includes("?") || QUESTION_RE.test(text)) {
+      return { type: "doubt", query: transcript };
     }
     return { type: "unknown", query: transcript };
   }

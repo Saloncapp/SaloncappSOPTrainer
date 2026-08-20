@@ -615,6 +615,7 @@ If expected reply is assessment_confirm, review_or_assessment, or retake_or_revi
 - confirm/assessment only for explicit yes/ready/start (ஆம், हाँ included).
 - decline for no/not yet/later (இல்லை, வேண்டாம், नहीं included).
 If they ask a question about a step, unknown. If they ask to play a step, review plus stepNumber.
+If expected reply is retake_or_review, retake only for explicit retake/try again/assessment. Questions stay unknown.
 If unsure, unknown and confidence below 0.5.
 
 Return JSON:
