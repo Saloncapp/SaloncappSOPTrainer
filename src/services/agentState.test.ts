@@ -256,6 +256,14 @@ test("naming the next step after a completed video plays that video", () => {
       videoUrl: "https://example.com/3.mp4",
       videoDurationSeconds: 15,
     },
+    {
+      stepNumber: 4,
+      title: "Extraction",
+      description: "",
+      importantPoints: [],
+      videoUrl: "https://example.com/4.mp4",
+      videoDurationSeconds: 15,
+    },
   ];
   const post = snap({ phase: "post_video", currentStepNumber: 2 });
   const context = ctx({
@@ -325,6 +333,116 @@ test("previous step from a later video plays the prior step", () => {
     context,
   );
   assert.deepEqual(namedEarlier.action, { type: "play_video", stepNumber: 1 });
+});
+
+test("explicit play-step transcript wins over a stale current step", () => {
+  const steps = [
+    ...ctx().steps,
+    {
+      stepNumber: 3,
+      title: "Coco-Coffee Scrub",
+      description: "Using hands first.",
+      importantPoints: [],
+      videoUrl: "https://example.com/3.mp4",
+      videoDurationSeconds: 15,
+    },
+    {
+      stepNumber: 4,
+      title: "Extraction",
+      description: "",
+      importantPoints: [],
+      videoUrl: "https://example.com/4.mp4",
+      videoDurationSeconds: 15,
+    },
+    {
+      stepNumber: 7,
+      title: "LED Mask",
+      description: "",
+      importantPoints: [],
+      videoUrl: "https://example.com/7.mp4",
+      videoDurationSeconds: 15,
+    },
+  ];
+  const post = snap({ phase: "post_video", currentStepNumber: 7 });
+  const context = ctx({
+    steps,
+    completedStepNumbers: [1, 2, 3, 4, 5, 6, 7],
+    currentStepVideoCompleted: true,
+  });
+  const fromTranscript = reduceAgent(
+    post,
+    {
+      type: "voice",
+      intent: {
+        type: "review",
+        query: "Got it. I'll play the Step 7 training video now. Play Step 1 video",
+        stepNumber: 7,
+      },
+    },
+    context,
+  );
+  assert.deepEqual(fromTranscript.action, { type: "play_video", stepNumber: 1 });
+  assert.match(fromTranscript.spokenText, /step 1/i);
+  assert.doesNotMatch(fromTranscript.spokenText, /I'll play the Step 7/i);
+
+  const playStep4 = reduceAgent(
+    post,
+    {
+      type: "voice",
+      intent: {
+        type: "review",
+        query: "Play Step 4",
+        stepNumber: 2,
+      },
+    },
+    context,
+  );
+  assert.deepEqual(playStep4.action, { type: "play_video", stepNumber: 4 });
+  assert.match(playStep4.spokenText, /step 4/i);
+
+  const playStep1Only = reduceAgent(
+    snap({ phase: "post_video", currentStepNumber: 4, reviewStepNumber: 3 }),
+    {
+      type: "voice",
+      intent: {
+        type: "review",
+        query: "play step 1",
+        stepNumber: 3,
+      },
+    },
+    context,
+  );
+  assert.deepEqual(playStep1Only.action, { type: "play_video", stepNumber: 1 });
+  assert.match(playStep1Only.spokenText, /Got it\. I'll play the Step 1/i);
+});
+
+test("only next and previous calculate relative to currentStep", () => {
+  const steps = [
+    ...ctx().steps,
+    {
+      stepNumber: 3,
+      title: "Coco-Coffee Scrub",
+      description: "Using hands first.",
+      importantPoints: [],
+      videoUrl: "https://example.com/3.mp4",
+      videoDurationSeconds: 15,
+    },
+  ];
+  const post = snap({ phase: "post_video", currentStepNumber: 2 });
+  const context = ctx({
+    steps,
+    completedStepNumbers: [1, 2],
+    currentStepVideoCompleted: true,
+  });
+  const next = reduceAgent(post, { type: "voice", intent: { type: "next" } }, context);
+  assert.deepEqual(next.action, { type: "play_video", stepNumber: 3 });
+
+  const previous = reduceAgent(
+    post,
+    { type: "voice", intent: { type: "review", query: "previous step", stepNumber: null } },
+    context,
+  );
+  assert.deepEqual(previous.action, { type: "play_video", stepNumber: 1 });
 });
 
 test("next still plays the next incomplete video if currentStep already advanced", () => {

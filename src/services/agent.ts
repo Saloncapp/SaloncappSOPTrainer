@@ -31,6 +31,7 @@ import {
   isPreviousStepRequest,
   looksLikeDecline,
   looksLikeEmptyOrNoiseTranscript,
+  looksLikePlayStepRequest,
   looksLikeStepNavigation,
   matchSteps,
   parseRuleIntent,
@@ -363,9 +364,29 @@ async function resolveIntent(options: {
     return { type: "decline", query: transcript };
   }
 
+  const explicitStep = extractStepNumber(transcript);
+  if (explicitStep && looksLikePlayStepRequest(transcript)) {
+    return {
+      type: "review",
+      query: transcript,
+      stepNumber: explicitStep,
+      candidates: [explicitStep],
+      confidence: 1,
+    };
+  }
+
   if (ruleIntent.type === "review") {
     if (isPreviousStepRequest(transcript) && !extractStepNumber(transcript)) {
       return { type: "review", query: transcript, stepNumber: null };
+    }
+    if (explicitStep) {
+      return {
+        type: "review",
+        query: transcript,
+        stepNumber: explicitStep,
+        candidates: [explicitStep],
+        confidence: 1,
+      };
     }
     const matched = matchSteps(ruleIntent.query || transcript, steps);
     if (matched.stepNumber) {
@@ -462,12 +483,13 @@ async function resolveIntent(options: {
     }
     if (gemini.intent === "review") {
       const matched = matchSteps(transcript, steps);
+      const explicit = extractStepNumber(transcript);
       return {
         type: "review",
         query: transcript,
-        stepNumber: gemini.stepNumber || matched.stepNumber,
-        candidates: matched.candidates,
-        confidence: gemini.confidence,
+        stepNumber: explicit || matched.stepNumber || gemini.stepNumber,
+        candidates: explicit ? [explicit] : matched.candidates,
+        confidence: explicit ? 1 : gemini.confidence,
       };
     }
     return { type: gemini.intent, query: transcript, stepNumber: gemini.stepNumber };

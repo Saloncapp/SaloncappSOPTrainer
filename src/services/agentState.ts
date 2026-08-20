@@ -767,11 +767,16 @@ function handleReviewIntent(
 ): AgentReduceResult | null {
   if (intent.type !== "review") return null;
   const query = String(intent.query || "");
+  // Finalized transcript step number is the single source of truth. Stale
+  // intent.stepNumber / currentStep / reviewStepNumber must never override it.
   const numbered = extractStepNumber(query);
   const previousAsk = isPreviousStepRequest(query);
   const cursor = snapshot.reviewStepNumber || snapshot.currentStepNumber;
-  let stepNumber = numbered || intent.stepNumber || null;
-  if (previousAsk) {
+  const maxStep = ctx.steps.reduce((max, step) => Math.max(max, step.stepNumber), 0);
+  let stepNumber: number | null = null;
+  if (numbered != null) {
+    stepNumber = numbered;
+  } else if (previousAsk) {
     stepNumber = cursor - 1;
     if (!stepNumber || stepNumber < 1) {
       return stay(
@@ -779,6 +784,17 @@ function handleReviewIntent(
         "You are already on the first step. You can watch this video, or move to the next step.",
       );
     }
+  } else if (intent.stepNumber && intent.stepNumber > 0) {
+    // Title/fuzzy match only — never used when the transcript named a step.
+    stepNumber = intent.stepNumber;
+  }
+  if (stepNumber != null && (stepNumber < 1 || (maxStep > 0 && stepNumber > maxStep))) {
+    return stay(
+      snapshot,
+      maxStep > 0
+        ? `That step is not in this training. Please choose a step from 1 to ${maxStep}.`
+        : "I could not find that step.",
+    );
   }
   if (!stepNumber) {
     const candidates = (intent.candidates || []).filter(

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isPreviousStepRequest, matchSteps, parseRuleIntent, scoreStep } from "./agentIntents";
+import { extractStepNumber, isPreviousStepRequest, matchSteps, parseRuleIntent, scoreStep } from "./agentIntents";
 import type { AgentStepInfo, ExpectedInput } from "./agentTypes";
 
 const steps: AgentStepInfo[] = [
@@ -81,6 +81,37 @@ test("post-video doubt phase recognizes no doubts and questions", () => {
   assert.equal(parseRuleIntent("go back", "doubt_or_navigate").type, "review");
   assert.equal(parseRuleIntent("play step 4", "doubt_or_navigate").type, "review");
   assert.equal(parseRuleIntent("play step 4", "doubt_or_navigate").stepNumber, 4);
+  assert.equal(parseRuleIntent("Play Step 1", "doubt_or_navigate").stepNumber, 1);
+  assert.equal(parseRuleIntent("Play Step 4", "next_or_rewatch").stepNumber, 4);
+  assert.equal(
+    parseRuleIntent(
+      "Got it. I'll play the Step 6 training video now. play step 1",
+      "doubt_or_navigate",
+    ).stepNumber,
+    1,
+  );
+  assert.equal(
+    extractStepNumber("Got it. I'll play the Step 6 training video now. play step 1"),
+    1,
+  );
+  assert.equal(extractStepNumber("Step 3 is complete. Play step 1"), 1);
+  assert.equal(extractStepNumber("play step 1"), 1);
+  assert.equal(extractStepNumber("Play Step 1 video"), 1);
+  assert.equal(extractStepNumber("play step one"), 1);
+  assert.equal(extractStepNumber("I want to watch step 1"), 1);
+  assert.equal(extractStepNumber("Go to step 1"), 1);
+  assert.equal(extractStepNumber("Can you play the first step?"), 1);
+  assert.equal(
+    extractStepNumber("Got it. I'll play the Step 7 training video now. Play Step 1 video"),
+    1,
+  );
+  assert.equal(
+    extractStepNumber("Got it. I'll play the Step 7 training video now. Please watch carefully."),
+    null,
+  );
+  assert.equal(parseRuleIntent("Play Step 1 video", "doubt_or_navigate").stepNumber, 1);
+  assert.equal(parseRuleIntent("play step one", "doubt_or_navigate").stepNumber, 1);
+  assert.equal(parseRuleIntent("Can you play the first step?", "doubt_or_navigate").stepNumber, 1);
   assert.equal(parseRuleIntent("play the next step", "doubt_or_navigate").type, "next");
   assert.equal(parseRuleIntent("move to step 6", "doubt_or_navigate").type, "review");
   assert.equal(parseRuleIntent("move to step 6", "doubt_or_navigate").stepNumber, 6);

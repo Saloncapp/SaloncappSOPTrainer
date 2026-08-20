@@ -98,11 +98,164 @@ export function looksLikeEmptyOrNoiseTranscript(transcript: string): boolean {
   return false;
 }
 
+const EN_STEP_WORDS: Record<string, number> = {
+  one: 1,
+  first: 1,
+  "1st": 1,
+  two: 2,
+  second: 2,
+  "2nd": 2,
+  three: 3,
+  third: 3,
+  "3rd": 3,
+  four: 4,
+  fourth: 4,
+  "4th": 4,
+  five: 5,
+  fifth: 5,
+  "5th": 5,
+  six: 6,
+  sixth: 6,
+  "6th": 6,
+  seven: 7,
+  seventh: 7,
+  "7th": 7,
+  eight: 8,
+  eighth: 8,
+  "8th": 8,
+  nine: 9,
+  ninth: 9,
+  "9th": 9,
+  ten: 10,
+  tenth: 10,
+  "10th": 10,
+};
+
+const TA_STEP_WORDS: Record<string, number> = {
+  ஒன்று: 1,
+  முதல்: 1,
+  இரண்டு: 2,
+  மூன்று: 3,
+  நான்கு: 4,
+  ஐந்து: 5,
+  ஆறு: 6,
+  ஏழு: 7,
+  எட்டு: 8,
+  ஒன்பது: 9,
+  பத்து: 10,
+};
+
+const HI_STEP_WORDS: Record<string, number> = {
+  एक: 1,
+  पहला: 1,
+  पहले: 1,
+  दो: 2,
+  दूसरा: 2,
+  तीन: 3,
+  तीसरा: 3,
+  चार: 4,
+  पांच: 5,
+  पाँच: 5,
+  छह: 6,
+  सात: 7,
+  आठ: 8,
+  नौ: 9,
+  दस: 10,
+};
+
+function parseStepToken(token: string): number | null {
+  const raw = String(token || "").trim().toLowerCase();
+  if (!raw) return null;
+  if (/^\d{1,2}$/.test(raw)) {
+    const n = Number(raw);
+    return n > 0 ? n : null;
+  }
+  return EN_STEP_WORDS[raw] ?? TA_STEP_WORDS[token] ?? HI_STEP_WORDS[token] ?? null;
+}
+
+/** Drop the Agent's own "Got it, I'll play Step N..." so TTS echo cannot become the target. */
+export function stripAgentPlaybackEcho(transcript: string): string {
+  return String(transcript || "")
+    .replace(
+      /\bgot it\.?\s*i(?:'|’| will|\s+)?l*l play the step \d+ training video now(?:\.\s*please watch carefully)?\.?/gi,
+      " ",
+    )
+    .replace(
+      /\bi(?:'|’| will|\s+)?l*l play the step \d+ training video now(?:\.\s*please watch carefully)?\.?/gi,
+      " ",
+    )
+    .replace(/\bplease watch carefully\.?/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function lastCapturedStep(matches: Iterable<RegExpMatchArray>): number | null {
+  let found: number | null = null;
+  for (const match of matches) {
+    const parsed = parseStepToken(match[1] || "");
+    if (parsed) found = parsed;
+  }
+  return found;
+}
+
 export function extractStepNumber(text: string): number | null {
-  const match = normalizeText(text).match(/\bstep\s*(\d{1,2})\b/);
-  if (!match) return null;
-  const n = Number(match[1]);
-  return n > 0 ? n : null;
+  const original = stripAgentPlaybackEcho(text);
+  if (!original) return null;
+  const latin = normalizeText(original);
+
+  const commanded = lastCapturedStep(
+    latin.matchAll(
+      /\b(?:play|go to|goto|move to|open|watch|show|want to watch|want to play)\s+(?:the\s+)?(?:step\s+)?(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|1st|2nd|3rd|4th|5th|6th|7th|8th|9th|10th)\b/g,
+    ),
+  );
+  if (commanded) return commanded;
+
+  const firstStep = lastCapturedStep(
+    latin.matchAll(
+      /\b(?:play|go to|goto|move to|open|watch|show)\s+(?:the\s+)?(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\s+step\b/g,
+    ),
+  );
+  if (firstStep) return firstStep;
+
+  const ta = original.match(
+    /(?:ஸ்டெப்|ஸ்டேப்|படி)\s*(\d{1,2}|ஒன்று|முதல்|இரண்டு|மூன்று|நான்கு|ஐந்து|ஆறு|ஏழு|எட்டு|ஒன்பது|பத்து)/,
+  );
+  if (ta) {
+    const parsed = parseStepToken(ta[1]);
+    if (parsed) return parsed;
+  }
+  if (/முதல்\s*(?:படி|ஸ்டெப்|ஸ்டேப்)/.test(original)) return 1;
+
+  const hi = original.match(
+    /(?:स्टेप|चरण)\s*(\d{1,2}|एक|पहला|दो|दूसरा|तीन|चार|पांच|पाँच|छह|सात|आठ|नौ|दस)/,
+  );
+  if (hi) {
+    const parsed = parseStepToken(hi[1]);
+    if (parsed) return parsed;
+  }
+  if (/पहला\s*(?:स्टेप|चरण)/.test(original)) return 1;
+
+  return lastCapturedStep(
+    latin.matchAll(
+      /\bstep\s*(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\b/g,
+    ),
+  );
+}
+
+export function looksLikePlayStepRequest(transcript: string): boolean {
+  if (extractStepNumber(transcript) == null) return false;
+  const original = String(transcript || "");
+  const latin = normalizeText(stripAgentPlaybackEcho(original));
+  if (
+    /\b(play|go to|goto|move to|open|watch|show|want to watch|want to play|first step|second step)\b/.test(
+      latin,
+    )
+  ) {
+    return true;
+  }
+  if (/(ஸ்டெப்|ஸ்டேப்|படி|வீடியோ|பார்)/.test(original)) return true;
+  if (/(स्टेप|चरण|वीडियो|चलाओ|देखो)/.test(original)) return true;
+  return false;
 }
 
 function hasWord(text: string, re: RegExp): boolean {
@@ -204,7 +357,10 @@ export function parseRuleIntent(
     return { type: "unknown", query: transcript };
   }
 
-  const stepNumber = extractStepNumber(text);
+  const stepNumber = extractStepNumber(original);
+  if (stepNumber && looksLikePlayStepRequest(original)) {
+    return { type: "review", query: transcript, stepNumber };
+  }
   if (looksLikePreviousUtterance(original, text) && !stepNumber) {
     return { type: "review", query: transcript, stepNumber: null };
   }
