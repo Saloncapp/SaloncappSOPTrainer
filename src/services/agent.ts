@@ -27,6 +27,8 @@ import {
   localizeTrainerSpeech,
 } from "./gemini";
 import {
+  extractStepNumber,
+  isPreviousStepRequest,
   looksLikeDecline,
   looksLikeEmptyOrNoiseTranscript,
   looksLikeStepNavigation,
@@ -181,6 +183,8 @@ function clientAction(
       title: step?.title,
       description: step?.description,
       importantPoints: step?.importantPoints || [],
+      locales: step?.locales,
+      audio: step?.audio,
     };
   }
   return { type: action.type };
@@ -202,8 +206,10 @@ function currentStepInfo(
         title: step.title,
         description: step.description,
         importantPoints: step.importantPoints || [],
+        locales: step.locales,
         videoUrl: step.videoUrl,
         videoDurationSeconds: step.videoDurationSeconds || 0,
+        audio: step.audio,
       }
     : null;
 }
@@ -358,6 +364,9 @@ async function resolveIntent(options: {
   }
 
   if (ruleIntent.type === "review") {
+    if (isPreviousStepRequest(transcript) && !extractStepNumber(transcript)) {
+      return { type: "review", query: transcript, stepNumber: null };
+    }
     const matched = matchSteps(ruleIntent.query || transcript, steps);
     if (matched.stepNumber) {
       return {
@@ -637,7 +646,15 @@ export async function submitAgentTurn(options: {
         transcript = stt.transcript.trim();
       }
     }
-    return ignoredDuringVideoTurn({ session, training, progress });
+    if (!transcript) {
+      return ignoredDuringVideoTurn({ session, training, progress });
+    }
+    // Staff interrupted the intro (or asked a question before playback).
+    // Leave the video unplayed and uncompleted so they can navigate or ask.
+    session.phase = session.phase === "playing_review" ? "post_review" : "post_video";
+    session.navigationOffered = false;
+    session.expectedInput = expectedInputForSnapshot(snapshotFromSession(session));
+    ctx = buildContext(training, progress, session.currentStepNumber);
   }
 
   if (session.expectedInput === "assessment_answer" || session.phase === "in_assessment") {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { matchSteps, parseRuleIntent, scoreStep } from "./agentIntents";
+import { isPreviousStepRequest, matchSteps, parseRuleIntent, scoreStep } from "./agentIntents";
 import type { AgentStepInfo, ExpectedInput } from "./agentTypes";
 
 const steps: AgentStepInfo[] = [
@@ -68,13 +68,32 @@ test("post-video doubt phase recognizes no doubts and questions", () => {
   assert.equal(parseRuleIntent("no doubts", "doubt_or_navigate").type, "no_doubt");
   assert.equal(parseRuleIntent("next", "doubt_or_navigate").type, "next");
   assert.equal(parseRuleIntent("ok", "doubt_or_navigate").type, "next");
-  assert.equal(parseRuleIntent("watch step 2", "doubt_or_navigate").type, "review");
+  assert.equal(parseRuleIntent("play step 3 video", "doubt_or_navigate").type, "review");
+  assert.equal(parseRuleIntent("play step 3 video", "doubt_or_navigate").stepNumber, 3);
+  assert.equal(parseRuleIntent("play step3 video", "doubt_or_navigate").stepNumber, 3);
   assert.equal(parseRuleIntent("watch step 2", "doubt_or_navigate").stepNumber, 2);
   assert.equal(parseRuleIntent("watch step 1", "doubt_or_navigate").type, "review");
   assert.equal(parseRuleIntent("watch step 1", "doubt_or_navigate").stepNumber, 1);
   assert.equal(parseRuleIntent("can I watch step 1", "doubt_or_navigate").type, "review");
   assert.equal(parseRuleIntent("I want to watch step 1 video", "doubt_or_navigate").type, "review");
   assert.equal(parseRuleIntent("previous step", "doubt_or_navigate").type, "review");
+  assert.equal(parseRuleIntent("play the previous step", "doubt_or_navigate").type, "review");
+  assert.equal(parseRuleIntent("go back", "doubt_or_navigate").type, "review");
+  assert.equal(parseRuleIntent("play step 4", "doubt_or_navigate").type, "review");
+  assert.equal(parseRuleIntent("play step 4", "doubt_or_navigate").stepNumber, 4);
+  assert.equal(parseRuleIntent("play the next step", "doubt_or_navigate").type, "next");
+  assert.equal(parseRuleIntent("move to step 6", "doubt_or_navigate").type, "review");
+  assert.equal(parseRuleIntent("move to step 6", "doubt_or_navigate").stepNumber, 6);
+  assert.equal(parseRuleIntent("continue", "doubt_or_navigate").type, "next");
+  assert.equal(parseRuleIntent("go to the next video", "doubt_or_navigate").type, "next");
+  assert.equal(isPreviousStepRequest("previous step"), true);
+  assert.equal(isPreviousStepRequest("go back"), true);
+  assert.equal(isPreviousStepRequest("play step 4"), false);
+  assert.equal(isPreviousStepRequest("play step 7"), false);
+  assert.equal(parseRuleIntent("முந்தைய படி", "doubt_or_navigate").type, "review");
+  assert.equal(parseRuleIntent("அடுத்த படி", "doubt_or_navigate").type, "next");
+  assert.equal(parseRuleIntent("पिछला स्टेप", "doubt_or_navigate").type, "review");
+  assert.equal(parseRuleIntent("अगला स्टेप", "doubt_or_navigate").type, "next");
   assert.equal(
     parseRuleIntent("what is the mixing ratio for this step", "doubt_or_navigate").type,
     "doubt",

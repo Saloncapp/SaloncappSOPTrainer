@@ -1,3 +1,5 @@
+import type { SopStepLocales } from "../data/sops/types";
+
 export type AgentPhase =
   | "welcome"
   | "playing_video"
@@ -39,8 +41,10 @@ export type AgentStepInfo = {
   title: string;
   description: string;
   importantPoints: string[];
+  locales?: SopStepLocales;
   videoUrl: string;
   videoDurationSeconds: number;
+  audio?: { ta: string; en: string; hi: string };
 };
 
 export type AgentContext = {
@@ -125,6 +129,8 @@ export type AgentClientAction = {
   title?: string;
   description?: string;
   importantPoints?: string[];
+  locales?: SopStepLocales;
+  audio?: { ta: string; en: string; hi: string };
 };
 
 export type AgentTurnResponse = {

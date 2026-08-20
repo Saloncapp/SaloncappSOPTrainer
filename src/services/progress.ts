@@ -6,7 +6,7 @@ import StaffTrainingProgress, {
 import { config } from "../config";
 import type { StaffAuth } from "../middleware/auth";
 import { findSopOrThrow } from "./catalog";
-import type { SopDefinition, SopStep } from "../data/sops/types";
+import type { SopDefinition, SopStep, SopStepLocales } from "../data/sops/types";
 import { isPlaceholderVideoUrl } from "../data/sops/types";
 
 export type StepLockState = "locked" | "unlocked" | "completed";
@@ -16,8 +16,10 @@ export type StepView = {
   title: string;
   description: string;
   importantPoints: string[];
+  locales?: SopStepLocales;
   videoUrl: string;
   videoDurationSeconds: number;
+  audio?: { ta: string; en: string; hi: string };
   state: StepLockState;
   videoPositionSeconds: number;
   videoCompleted: boolean;
@@ -170,8 +172,10 @@ export function buildStepViews(
         title: step.title,
         description: step.description,
         importantPoints: step.importantPoints || [],
+        locales: step.locales,
         videoUrl: step.videoUrl,
         videoDurationSeconds: step.videoDurationSeconds || 0,
+        audio: step.audio,
         state: getStepState(progress, step.stepNumber),
         videoPositionSeconds: p?.videoPositionSeconds ?? 0,
         videoCompleted: Boolean(p?.videoCompleted),

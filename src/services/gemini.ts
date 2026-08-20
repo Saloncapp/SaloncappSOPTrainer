@@ -10,11 +10,20 @@ import {
 const GEMINI_TIMEOUT_MS = 45000;
 const MAX_AUDIO_BASE64_CHARS = 8_000_000;
 
+let geminiClient: GoogleGenAI | null = null;
+
 function getApiKey(): string {
   if (!config.geminiApiKey) {
     throw new Error("GEMINI_API_KEY / GOOGLE_GEMINI_API_KEY is not configured");
   }
   return config.geminiApiKey;
+}
+
+function getGeminiClient(): GoogleGenAI {
+  if (!geminiClient) {
+    geminiClient = new GoogleGenAI({ apiKey: getApiKey() });
+  }
+  return geminiClient;
 }
 
 function stripJsonFences(text: string): string {
@@ -23,6 +32,42 @@ function stripJsonFences(text: string): string {
     t = t.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   }
   return t.trim();
+}
+
+function repairTruncatedJson(text: string): string {
+  let t = text.trim();
+  if (!t) return t;
+  const quotes = (t.match(/"/g) || []).length;
+  if (quotes % 2 === 1) t += '"';
+  const openBrackets = (t.match(/\[/g) || []).length;
+  const closeBrackets = (t.match(/]/g) || []).length;
+  if (openBrackets > closeBrackets) t += "]".repeat(openBrackets - closeBrackets);
+  const openBraces = (t.match(/{/g) || []).length;
+  const closeBraces = (t.match(/}/g) || []).length;
+  if (openBraces > closeBraces) t += "}".repeat(openBraces - closeBraces);
+  return t;
+}
+
+export function parseModelJson(text: string): unknown {
+  const stripped = stripJsonFences(text);
+  const candidates = [stripped];
+  const objectStart = stripped.indexOf("{");
+  const objectEnd = stripped.lastIndexOf("}");
+  if (objectStart >= 0) {
+    if (objectEnd > objectStart) {
+      candidates.push(stripped.slice(objectStart, objectEnd + 1));
+    }
+    candidates.push(repairTruncatedJson(stripped.slice(objectStart)));
+  }
+  let lastError: unknown;
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Empty Gemini response");
 }
 
 function extractResponseText(response: unknown): string {
@@ -73,10 +118,15 @@ Accept answers that convey the correct meaning even if wording differs or langua
 The staff may speak Tamil, English, Hindi, or mix those languages in one sentence.
 Return valid JSON only.`;
 
-async function generateJson(prompt: string): Promise<unknown> {
-  const ai = new GoogleGenAI({ apiKey: getApiKey() });
+function logGeminiMs(label: string, startedAt: number): void {
+  console.log(`[agent-latency] gemini ${label} ${Date.now() - startedAt}ms`);
+}
+
+async function generateJson(prompt: string, maxOutputTokens = 512): Promise<unknown> {
+  const ai = getGeminiClient();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
+  const startedAt = Date.now();
   try {
     const response = await ai.models.generateContent({
       model: config.geminiModel,
@@ -85,15 +135,18 @@ async function generateJson(prompt: string): Promise<unknown> {
         systemInstruction: SYSTEM_GROUNDING,
         responseMimeType: "application/json",
         abortSignal: controller.signal,
+        maxOutputTokens,
+        thinkingConfig: { thinkingBudget: 0 },
       },
     });
     const text = extractResponseText(response);
     if (!text) {
       throw new Error("Empty Gemini response");
     }
-    return JSON.parse(stripJsonFences(text));
+    return parseModelJson(text);
   } finally {
     clearTimeout(timer);
+    logGeminiMs("json", startedAt);
   }
 }
 
@@ -101,13 +154,15 @@ async function generateJsonWithAudio(options: {
   prompt: string;
   audioBase64: string;
   mimeType: string;
+  maxOutputTokens?: number;
 }): Promise<unknown> {
   if (options.audioBase64.length > MAX_AUDIO_BASE64_CHARS) {
     throw new Error("Audio payload too large");
   }
-  const ai = new GoogleGenAI({ apiKey: getApiKey() });
+  const ai = getGeminiClient();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
+  const startedAt = Date.now();
   try {
     const response = await ai.models.generateContent({
       model: config.geminiModel,
@@ -129,15 +184,18 @@ async function generateJsonWithAudio(options: {
         systemInstruction: SYSTEM_GROUNDING,
         responseMimeType: "application/json",
         abortSignal: controller.signal,
+        maxOutputTokens: options.maxOutputTokens ?? 256,
+        thinkingConfig: { thinkingBudget: 0 },
       },
     });
     const text = extractResponseText(response);
     if (!text) {
       throw new Error("Empty Gemini response");
     }
-    return JSON.parse(stripJsonFences(text));
+    return parseModelJson(text);
   } finally {
     clearTimeout(timer);
+    logGeminiMs("audio", startedAt);
   }
 }
 
@@ -299,33 +357,75 @@ function shuffle<T>(items: T[]): T[] {
   return next;
 }
 
+export function formatSopIndex(
+  steps: Array<{ stepNumber: number; title: string }>,
+): string {
+  return steps.map((s) => `Step ${s.stepNumber}: ${s.title}`).join("\n");
+}
+
 export async function transcribeSpeech(options: {
   audioBase64: string;
   mimeType: string;
-}): Promise<{ transcript: string; emptyOrNoise: boolean }> {
-  const parsed = (await generateJsonWithAudio({
+  expectedInput?: string;
+  stepIndex?: string;
+}): Promise<{
+  transcript: string;
+  emptyOrNoise: boolean;
+  intent?: GeminiAgentIntent["intent"];
+  stepNumber?: number | null;
+  confidence?: number;
+}> {
+  const classify = Boolean(options.expectedInput);
+  try {
+    const parsed = (await generateJsonWithAudio({
     audioBase64: options.audioBase64,
     mimeType: options.mimeType,
+    maxOutputTokens: classify ? 280 : 160,
     prompt: `
-Carefully transcribe what the HUMAN said in this audio.
-The speaker may use Tamil, English, Hindi, or mix those languages in the same utterance.
-Transcribe in the original languages used. Do not translate.
-If silence, noise, or no human speech, transcript must be "" and emptyOrNoise must be true.
-Do not invent words such as yes, okay, start, thanks, or the previous prompt.
-Do not add extra words.
+Transcribe the HUMAN speech. Tamil, English, Hindi, or mixed is allowed.
+Transcribe in the original languages. Do not translate.
+If silence or noise only, transcript must be "" and emptyOrNoise true.
+Do not invent words.
 
+${classify ? `Also classify meaning for expected reply type: ${options.expectedInput}.
+Steps:\n${options.stepIndex || "(none)"}
+Valid intents: confirm, next, rewatch, assessment, retake, review, exit, replay, decline, unknown.
+Use confirm/assessment only for an explicit yes/ready/start. Use decline for no/not yet/later/இல்லை/வேண்டாம்/नहीं.
+If they ask a training question, intent=unknown. If they ask to play a step, intent=review with stepNumber.
+` : ""}
 Return JSON:
 {
-  "transcript": "full careful transcription or empty string",
-  "emptyOrNoise": false
+  "transcript": "",
+  "emptyOrNoise": false${classify ? `,
+  "intent": "unknown",
+  "stepNumber": null,
+  "confidence": 0.0` : ""}
 }
 `,
-  })) as { transcript?: string; emptyOrNoise?: boolean };
+  })) as {
+    transcript?: string;
+    emptyOrNoise?: boolean;
+    intent?: GeminiAgentIntent["intent"];
+    stepNumber?: number | null;
+    confidence?: number;
+  };
 
   const transcript = String(parsed.transcript || "").trim();
   const emptyOrNoise =
     Boolean(parsed.emptyOrNoise) || looksLikeEmptyOrNoiseTranscript(transcript);
-  return { transcript, emptyOrNoise };
+  if (!classify || emptyOrNoise) {
+    return { transcript, emptyOrNoise };
+  }
+  return {
+    transcript,
+    emptyOrNoise,
+    intent: parsed.intent,
+    stepNumber: parsed.stepNumber ?? null,
+    confidence: Math.max(0, Math.min(1, Number(parsed.confidence) || 0)),
+  };
+  } catch {
+    return { transcript: "", emptyOrNoise: true };
+  }
 }
 
 export async function transcribeAndEvaluateAnswer(options: {
@@ -340,7 +440,8 @@ export async function transcribeAndEvaluateAnswer(options: {
   correct: boolean;
   feedback: string;
 }> {
-  const parsed = (await generateJsonWithAudio({
+  try {
+    const parsed = (await generateJsonWithAudio({
     audioBase64: options.audioBase64,
     mimeType: options.mimeType,
     prompt: `
@@ -381,6 +482,14 @@ Return JSON:
     correct: emptyOrNoise ? false : Boolean(parsed.correct),
     feedback: String(parsed.feedback || "").trim(),
   };
+  } catch {
+    return {
+      transcript: "",
+      emptyOrNoise: true,
+      correct: false,
+      feedback: "",
+    };
+  }
 }
 
 export async function evaluateTextAnswer(options: {
@@ -433,21 +542,14 @@ export async function answerStepDoubt(options: {
   const parsed = (await generateJson(`
 ${options.sopContext}
 
-The staff member just watched this training step:
-${stepDetails}
-
-Staff question or doubt: ${JSON.stringify(options.question)}
+Staff question about step ${options.step.stepNumber} (${options.step.title}): ${JSON.stringify(options.question)}
+Current step details: ${stepDetails}
 
 ${multilingualUnderstandingRule(options.responseLanguage || "en")}
 
 Answer as a professional ${options.trainingTitle} trainer.
-Use ONLY the approved SOP above as the source of truth. Do not invent procedures, products, timings, or salon advice.
-Understand the staff member's meaning even if grammar, wording, or language is imperfect or mixed.
-If they ask why, how, which product, which intensity, or which skin type, explain the meaning from the SOP.
-If the question is about another documented step, answer from that step in the SOP.
-Answer only what they asked. Do not recap the full step unless they asked for those details.
-Keep the answer concise, clear, and practical — two to four sentences unless more detail is essential.
-If the question is outside the documented SOP, say so briefly and invite them to continue training.
+Use ONLY the approved SOP. Do not invent procedures or products.
+Understand mixed Tamil/English/Hindi. Answer only what they asked, in two to four sentences.
 Write the "answer" field entirely in the selected response language.
 
 Return JSON:
@@ -455,7 +557,7 @@ Return JSON:
   "answer": "professional spoken answer",
   "inScope": true
 }
-`)) as { answer?: string; inScope?: boolean };
+`, 400)) as { answer?: string; inScope?: boolean };
 
   const answer = String(parsed.answer || "").trim();
   if (!answer) {
@@ -499,45 +601,30 @@ export async function interpretTrainingUtterance(options: {
     importantPoints: string[];
   }>;
 }): Promise<GeminiAgentIntent> {
-  const stepList = options.steps
-    .map(
-      (s) =>
-        `Step ${s.stepNumber}: ${s.title} | ${s.description} | ${(s.importantPoints || []).join("; ")}`,
-    )
-    .join("\n");
+  const stepList = formatSopIndex(options.steps);
 
   const parsed = (await generateJson(`
-${options.sopContext}
-
-Approved steps:
-${stepList}
-
 Expected staff reply type: ${options.expectedInput}
 Staff said: ${JSON.stringify(options.transcript)}
+Steps:
+${stepList}
 
-Classify the staff utterance for a voice training tutor.
-The staff may speak Tamil, English, Hindi, or mix them in one sentence. Classify by meaning, not by which language they used.
+Classify by meaning. Tamil, English, Hindi, or mixed is allowed.
 Valid intents: confirm, next, rewatch, assessment, retake, review, exit, replay, decline, unknown.
-If expected reply type is assessment_confirm, review_or_assessment, or retake_or_review:
-- Use assessment or confirm only for an explicit positive (yes, ready, start the assessment, okay begin, ஆம், ஆமாம், हाँ).
-- Use decline for a negative or delay (no, not yet, not now, don't start, wait, later, I'm not ready, இல்லை, வேண்டாம், नहीं).
-- Do NOT treat a negative answer as confirm or assessment just because the tutor asked whether to start.
-- If the answer is unclear or mixed, use unknown with confidence below 0.5.
-If they are asking a question or expressing a doubt about a product, method, or step, use intent=unknown (the tutor will answer the doubt). Do NOT use review unless they clearly asked to play or watch that step's video.
-If they name a step only to ask about it, intent=unknown.
-If they clearly ask to play/watch/go to a step, intent=review and the matching stepNumber.
-Only use a stepNumber that exists in the approved steps.
-Do NOT invent SOP content.
-If unsure, intent=unknown and confidence below 0.5.
+If expected reply is assessment_confirm, review_or_assessment, or retake_or_review:
+- confirm/assessment only for explicit yes/ready/start (ஆம், हाँ included).
+- decline for no/not yet/later (இல்லை, வேண்டாம், नहीं included).
+If they ask a question about a step, unknown. If they ask to play a step, review plus stepNumber.
+If unsure, unknown and confidence below 0.5.
 
 Return JSON:
 {
-  "intent": "confirm",
+  "intent": "unknown",
   "stepNumber": null,
   "confidence": 0.0,
-  "clarification": "short message if unknown or ambiguous"
+  "clarification": ""
 }
-`)) as {
+`, 220)) as {
     intent?: GeminiAgentIntent["intent"];
     stepNumber?: number | null;
     confidence?: number;
@@ -599,8 +686,6 @@ export async function selectReviewStep(options: {
     .join("\n");
 
   const parsed = (await generateJson(`
-${options.sopContext}
-
 Approved steps:
 ${stepList}
 
@@ -659,18 +744,14 @@ export async function localizeTrainerSpeech(options: {
     const parsed = (await generateJson(`
 ${multilingualUnderstandingRule(options.responseLanguage)}
 
-Rewrite the following salon trainer utterance so a staff member can hear it spoken aloud.
-Keep the same meaning, facts, step numbers, product names, and timings.
-Do not add new SOP content.
-Do not explain the translation.
-Output only the rewritten spoken line in the selected response language.
+Rewrite this trainer line for spoken playback in the selected response language.
+Keep facts, step numbers, product names, and timings. Do not add SOP content.
 
-Source utterance:
 ${JSON.stringify(text)}
 
 Return JSON:
 { "speech": "rewritten spoken utterance" }
-`)) as { speech?: string };
+`, 220)) as { speech?: string };
     const speech = String(parsed.speech || "").trim() || text;
     localizeCache.set(cacheKey, speech);
     return speech;

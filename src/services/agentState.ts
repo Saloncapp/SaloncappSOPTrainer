@@ -1,4 +1,4 @@
-import { titlesForSteps } from "./agentIntents";
+import { extractStepNumber, isPreviousStepRequest, titlesForSteps } from "./agentIntents";
 import type {
   AgentAction,
   AgentContext,
@@ -766,25 +766,56 @@ function handleReviewIntent(
   intent: ParsedIntent,
 ): AgentReduceResult | null {
   if (intent.type !== "review") return null;
-  const previousAsk = /\b(previous|earlier)\b/.test(
-    String(intent.query || "").toLowerCase(),
-  );
-  let stepNumber = intent.stepNumber || null;
-  if (!stepNumber && previousAsk) {
-    stepNumber = snapshot.currentStepNumber - 1;
+  const query = String(intent.query || "");
+  const numbered = extractStepNumber(query);
+  const previousAsk = isPreviousStepRequest(query);
+  const cursor = snapshot.reviewStepNumber || snapshot.currentStepNumber;
+  let stepNumber = numbered || intent.stepNumber || null;
+  if (previousAsk) {
+    stepNumber = cursor - 1;
+    if (!stepNumber || stepNumber < 1) {
+      return stay(
+        snapshot,
+        "You are already on the first step. You can watch this video, or move to the next step.",
+      );
+    }
   }
-  if (stepNumber && stepNumber === snapshot.currentStepNumber) {
+  if (!stepNumber) {
+    const candidates = (intent.candidates || []).filter(
+      (n) => n <= snapshot.currentStepNumber,
+    );
+    if (candidates.length > 1) {
+      return stay(
+        snapshot,
+        `I found more than one match: ${titlesForSteps(ctx.steps, candidates)}. Which one should I play?`,
+      );
+    }
+    if (candidates.length === 1 && stepByNumber(ctx, candidates[0])) {
+      return beginReview(ctx, snapshot, candidates[0]);
+    }
+    return stay(
+      snapshot,
+      "I could not find that earlier step. Please say a step number or title you have already watched.",
+    );
+  }
+  if (stepNumber === snapshot.currentStepNumber && !snapshot.reviewStepNumber) {
     return beginStep(ctx, stepNumber);
   }
-  if (stepNumber && stepNumber > snapshot.currentStepNumber) {
+  if (stepNumber > snapshot.currentStepNumber) {
+    const currentDone = ctx.completedStepNumbers.includes(snapshot.currentStepNumber);
+    const next = nextStepNumber(ctx, snapshot.currentStepNumber);
+    if (currentDone && next != null && stepNumber === next) {
+      return beginStep(ctx, stepNumber);
+    }
+    const allowed = currentDone ? next ?? snapshot.currentStepNumber : snapshot.currentStepNumber;
     return stay(
       snapshot,
       isLastStep(ctx, snapshot.currentStepNumber)
         ? "That step is later in the training. You can watch an earlier step, or say you are ready for the assessment."
-        : "That step comes later. You can watch an earlier step, or move to the next video.",
+        : `That step comes later. Let's continue with Step ${allowed} first.`,
     );
   }
-  if (stepNumber && stepByNumber(ctx, stepNumber)) {
+  if (stepByNumber(ctx, stepNumber)) {
     return beginReview(ctx, snapshot, stepNumber);
   }
   const candidates = (intent.candidates || []).filter(

@@ -62,20 +62,24 @@ const TA_DECLINE_RE = /இல்லை|வேண்டாம்|வேணாம�
 const HI_CONFIRM_RE = /हाँ|हां|जी हाँ|जी हां|ठीक|शुरू|तैयार/;
 const HI_DECLINE_RE = /नहीं|नही|अभी नहीं|नहीं चाहिए|बाद में/;
 const NEXT_RE =
-  /\b(next|continue|move on|move to next|go to next|go ahead|proceed|skip)\b/;
+  /\b(next|continue|move on|move to next|go to next|go ahead|proceed|skip|next step|next video|play the next|go to the next)\b/;
 const REWATCH_RE =
   /\b(rewatch|watch again|play again|replay|once more|one more time|again)\b/;
 const ASSESSMENT_RE =
   /\b(assessment|assesment|quiz|test|exam|evaluation|questions)\b/;
 const RETAKE_RE =
   /\b(retake|re take|try again|take again|attempt again|do it again)\b/;
-const EXIT_RE = /\b(stop|exit|quit|later|not now|pause|go back)\b/;
+const EXIT_RE = /\b(stop|exit|quit|later|not now|pause)\b/;
 const REPLAY_RE =
   /\b(repeat|say that again|what was that|pardon|come again|say again)\b/;
 const REVIEW_RE =
   /\b(review|rewatch|watch|play|show me|go to|open)\b/;
 const PREVIOUS_RE =
-  /\b(previous|earlier step|earlier video|watch previous|last video)\b/;
+  /\b(previous|go back|earlier step|earlier video|watch previous|last video|previous step|play the previous)\b/;
+const TA_PREVIOUS_RE = /முந்தைய|முந்தய|முன் படி|முன்படி/;
+const TA_NEXT_RE = /அடுத்த படி|அடுத்தது/;
+const HI_PREVIOUS_RE = /पिछला|पिछले|पहले वाला|पिछला स्टेप/;
+const HI_NEXT_RE = /अगला कदम|अगला स्टेप|अगला चरण/;
 const NO_DOUBT_RE =
   /\b(no doubt|no doubts|no question|no questions|all clear|got it|understood|nothing else|that's clear|thats clear|i'm good|im good|clear|no thanks|nothing|no more questions)\b/;
 const QUESTION_RE =
@@ -95,7 +99,7 @@ export function looksLikeEmptyOrNoiseTranscript(transcript: string): boolean {
 }
 
 export function extractStepNumber(text: string): number | null {
-  const match = normalizeText(text).match(/\bstep\s+(\d{1,2})\b/);
+  const match = normalizeText(text).match(/\bstep\s*(\d{1,2})\b/);
   if (!match) return null;
   const n = Number(match[1]);
   return n > 0 ? n : null;
@@ -103,6 +107,23 @@ export function extractStepNumber(text: string): number | null {
 
 function hasWord(text: string, re: RegExp): boolean {
   return re.test(normalizeText(text));
+}
+
+function looksLikePreviousUtterance(original: string, text: string): boolean {
+  if (TA_PREVIOUS_RE.test(original) || HI_PREVIOUS_RE.test(original)) return true;
+  return Boolean(text) && hasWord(text, PREVIOUS_RE);
+}
+
+export function isPreviousStepRequest(transcript: string): boolean {
+  const original = String(transcript || "").trim();
+  if (!original) return false;
+  if (extractStepNumber(original) != null) return false;
+  return looksLikePreviousUtterance(original, normalizeText(original));
+}
+
+function looksLikeNextUtterance(original: string, text: string): boolean {
+  if (TA_NEXT_RE.test(original) || HI_NEXT_RE.test(original)) return true;
+  return Boolean(text) && hasWord(text, NEXT_RE);
 }
 
 const DOUBT_QUESTION_RE =
@@ -183,11 +204,21 @@ export function parseRuleIntent(
     return { type: "unknown", query: transcript };
   }
 
+  const stepNumber = extractStepNumber(text);
+  if (looksLikePreviousUtterance(original, text) && !stepNumber) {
+    return { type: "review", query: transcript, stepNumber: null };
+  }
+  if (
+    stepNumber &&
+    !looksLikeQuestion(original) &&
+    (looksLikeReviewRequest(text) || hasWord(text, REVIEW_RE) || looksLikeNextUtterance(original, text))
+  ) {
+    return { type: "review", query: transcript, stepNumber };
+  }
+
   if (expectedInput === "none") {
     return { type: "unknown", query: transcript };
   }
-
-  const stepNumber = extractStepNumber(text);
 
   if (expectedInput === "doubt_or_navigate") {
     if (text && hasWord(text, NO_DOUBT_RE)) {
@@ -196,10 +227,10 @@ export function parseRuleIntent(
     if (text && hasWord(text, REWATCH_RE) && !stepNumber) {
       return { type: "rewatch" };
     }
-    if (text && hasWord(text, PREVIOUS_RE) && !stepNumber) {
+    if (looksLikePreviousUtterance(original, text) && !stepNumber) {
       return { type: "review", query: transcript, stepNumber: null };
     }
-    if (text && (hasWord(text, NEXT_RE) || hasWord(text, CONFIRM_RE)) && !looksLikeQuestion(original)) {
+    if ((looksLikeNextUtterance(original, text) || hasWord(text, CONFIRM_RE)) && !looksLikeQuestion(original)) {
       return { type: "next" };
     }
     if (text && hasWord(text, ASSESSMENT_RE) && !looksLikeQuestion(original)) {
@@ -227,7 +258,7 @@ export function parseRuleIntent(
     if (hasWord(text, REWATCH_RE) && !stepNumber) {
       return { type: "rewatch" };
     }
-    if (hasWord(text, NEXT_RE) || hasWord(text, CONFIRM_RE)) {
+    if (looksLikeNextUtterance(original, text) || hasWord(text, CONFIRM_RE)) {
       return { type: "next" };
     }
     if (stepNumber || looksLikeReviewRequest(text)) {
@@ -273,10 +304,10 @@ export function parseRuleIntent(
   }
 
   if (expectedInput === "confirm") {
-    if (hasWord(text, CONFIRM_RE) || hasWord(text, NEXT_RE) || hasWord(text, ASSESSMENT_RE)) {
+    if (hasWord(text, CONFIRM_RE) || looksLikeNextUtterance(original, text) || hasWord(text, ASSESSMENT_RE)) {
       return { type: "confirm" };
     }
-    if (stepNumber || hasWord(text, REVIEW_RE) || hasWord(text, PREVIOUS_RE)) {
+    if (stepNumber || hasWord(text, REVIEW_RE) || looksLikePreviousUtterance(original, text)) {
       return { type: "review", query: transcript, stepNumber };
     }
     return { type: "unknown", query: transcript };
@@ -285,7 +316,7 @@ export function parseRuleIntent(
   if (hasWord(text, RETAKE_RE)) return { type: "retake" };
   if (hasWord(text, ASSESSMENT_RE)) return { type: "assessment" };
   if (hasWord(text, REWATCH_RE)) return { type: "rewatch" };
-  if (hasWord(text, NEXT_RE)) return { type: "next" };
+  if (looksLikeNextUtterance(original, text)) return { type: "next" };
   if (hasWord(text, CONFIRM_RE)) return { type: "confirm" };
   if (stepNumber || looksLikeReviewRequest(text)) {
     return { type: "review", query: transcript, stepNumber };
@@ -308,7 +339,8 @@ export function looksLikeStepNavigation(transcript: string): boolean {
   if (looksLikeQuestion(original)) return false;
   const text = normalizeText(transcript);
   if (extractStepNumber(text) != null) return true;
-  if (hasWord(text, PREVIOUS_RE)) return true;
+  if (looksLikePreviousUtterance(original, text)) return true;
+  if (looksLikeNextUtterance(original, text)) return true;
   if (hasWord(text, REWATCH_RE)) return true;
   return looksLikeReviewRequest(text);
 }
