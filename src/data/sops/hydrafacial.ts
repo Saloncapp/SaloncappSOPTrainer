@@ -15,10 +15,9 @@ const HYDRAFACIAL_VIDEO_DURATION_SECONDS = 318;
 export const hydrafacial: SopDefinition = {
   slug: "hydrafacial",
   title: "HydraFacial",
-  description:
-    "FreshFace – Hydra Facial Complete Service Procedure. A complete Hydra Facial usually takes about 1.5 to 2 hours. It is a medicated facial, so precautions and strict hygiene are mandatory: wear clean gloves and use new disposable tissue wipes or sponges for every client. Everything must be single-use. Clean tools thoroughly after every use.",
+  description: "FreshFace-Hydra Facial Training",
   isActive: true,
-  contentVersion: 11,
+  contentVersion: 12,
   steps: withLocales(withMedia([
     {
       stepNumber: 1,
