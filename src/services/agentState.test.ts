@@ -291,6 +291,56 @@ test("naming the next step after a completed video plays that video", () => {
   assert.match(skipped.spokenText, /continue with Step 3 first/i);
 });
 
+test("play step N after completing step N-1 plays the unlocked next video", () => {
+  const steps = [
+    ...ctx().steps,
+    {
+      stepNumber: 3,
+      title: "Coco-Coffee Scrub",
+      description: "Using hands first.",
+      importantPoints: [],
+      videoUrl: "https://example.com/3.mp4",
+      videoDurationSeconds: 15,
+    },
+    {
+      stepNumber: 4,
+      title: "Extraction",
+      description: "",
+      importantPoints: [],
+      videoUrl: "https://example.com/4.mp4",
+      videoDurationSeconds: 15,
+    },
+  ];
+  const post = snap({ phase: "post_video", currentStepNumber: 3 });
+  const context = ctx({
+    steps,
+    completedStepNumbers: [1, 2, 3],
+    currentStepVideoCompleted: true,
+  });
+
+  const byNext = reduceAgent(post, { type: "voice", intent: { type: "next" } }, context);
+  assert.deepEqual(byNext.action, { type: "play_video", stepNumber: 4 });
+
+  const byName = reduceAgent(
+    post,
+    { type: "voice", intent: { type: "review", stepNumber: 4, query: "play step 4" } },
+    context,
+  );
+  assert.equal(byName.snapshot.phase, "playing_video");
+  assert.deepEqual(byName.action, { type: "play_video", stepNumber: 4 });
+  assert.doesNotMatch(byName.spokenText, /comes later/i);
+  assert.match(byName.spokenText, /step 4/i);
+
+  // Stale cursor must not block an unlocked next step.
+  const staleCursor = reduceAgent(
+    snap({ phase: "post_video", currentStepNumber: 2 }),
+    { type: "voice", intent: { type: "review", stepNumber: 4, query: "play step 4" } },
+    context,
+  );
+  assert.deepEqual(staleCursor.action, { type: "play_video", stepNumber: 4 });
+  assert.doesNotMatch(staleCursor.spokenText, /comes later/i);
+});
+
 test("previous step from a later video plays the prior step", () => {
   const steps = [
     ...ctx().steps,
@@ -657,6 +707,16 @@ test("passed staff can review a step but cannot retake", () => {
   assert.equal(wantsAssessmentStart(passedSnap, { type: "retake" }, passedCtx), false);
   assert.equal(wantsAssessmentStart(passedSnap, { type: "assessment" }, passedCtx), false);
 
+  const decline = reduceAgent(
+    passedSnap,
+    { type: "voice", intent: { type: "decline", query: "no dont start the assessment" } },
+    passedCtx,
+  );
+  assert.equal(decline.snapshot.phase, "passed");
+  assert.equal(decline.action.type, "idle");
+  assert.equal(decline.expectedInput, "none");
+  assert.match(decline.spokenText, /no problem|take your time/i);
+
   const review = reduceAgent(
     passedSnap,
     { type: "voice", intent: { type: "review", stepNumber: 1, query: "play step 1", confidence: 1 } },
@@ -770,6 +830,68 @@ test("targeted review asks about doubts then offers assessment navigation", () =
   assert.match(ready.spokenText, /assessment/i);
 });
 
+test("declining retake after a failed review says take your time", () => {
+  const failedCtx = ctx({
+    allStepsCompleted: true,
+    status: "failed_retraining",
+    completedStepNumbers: [1, 2],
+    currentStepVideoCompleted: true,
+  });
+  const afterReview = snap({
+    phase: "post_review",
+    currentStepNumber: 2,
+    reviewStepNumber: 1,
+    navigationOffered: false,
+  });
+
+  const declineBeforeNav = reduceAgent(
+    afterReview,
+    { type: "voice", intent: { type: "decline", query: "no dont start the assessment" } },
+    failedCtx,
+  );
+  assert.equal(declineBeforeNav.action.type, "idle");
+  assert.equal(declineBeforeNav.snapshot.phase, "failed_recovery");
+  assert.match(declineBeforeNav.spokenText, /take your time|continue later/i);
+
+  const declineAfterNav = reduceAgent(
+    { ...afterReview, navigationOffered: true },
+    { type: "voice", intent: { type: "decline", query: "not now" } },
+    failedCtx,
+  );
+  assert.equal(declineAfterNav.action.type, "idle");
+  assert.match(declineAfterNav.spokenText, /take your time|continue later/i);
+
+  const fromFailed = reduceAgent(
+    snap({ phase: "failed_recovery", currentStepNumber: 2 }),
+    { type: "voice", intent: { type: "decline", query: "dont start" } },
+    failedCtx,
+  );
+  assert.equal(fromFailed.action.type, "idle");
+  assert.match(fromFailed.spokenText, /take your time|continue later/i);
+});
+
+test("welcome resume can keep listening for a doubt without starting video", () => {
+  const result = reduceAgent(
+    snap({ phase: "welcome", currentStepNumber: 2 }),
+    { type: "voice", intent: { type: "doubt", query: "what is the mixing ratio?" } },
+    ctx({ completedStepNumbers: [1], currentStepVideoCompleted: false }),
+  );
+  assert.equal(result.snapshot.phase, "welcome");
+  assert.equal(result.action.type, "listen");
+  assert.notEqual(result.action.type, "play_video");
+  assert.doesNotMatch(result.spokenText, /can't get you/i);
+
+  const answered = reduceAgent(
+    snap({ phase: "welcome", currentStepNumber: 2 }),
+    { type: "doubt_answered", answerText: "Use a one to ten mixing ratio." },
+    ctx({ completedStepNumbers: [1] }),
+  );
+  assert.equal(answered.snapshot.phase, "welcome");
+  assert.equal(answered.action.type, "listen");
+  assert.match(answered.spokenText, /mixing ratio/i);
+  assert.match(answered.spokenText, /say yes to start step 2/i);
+});
+
 test("ambiguous review asks which step without playing", () => {
   const failed = snap({ phase: "failed_recovery", currentStepNumber: 2 });
   const result = reduceAgent(
@@ -858,4 +980,39 @@ test("post_video silence repeats the navigation prompt without replaying video",
   assert.equal(empty.action.type, "listen");
   assert.equal(empty.spokenText, `I can't get you. ${prompt}`);
   assert.notEqual(empty.action.type, "play_video");
+});
+
+test("assessment emptyOrNoise and clarify replies use the no-input prefix", () => {
+  const assessing = snap({ phase: "in_assessment", currentStepNumber: 2 });
+  const emptyAnswer = reduceAgent(
+    assessing,
+    {
+      type: "assessment_progress",
+      questionText: "What is the mixing ratio?",
+      questionIndex: 1,
+      total: 3,
+      emptyOrNoise: true,
+    },
+    ctx({ allStepsCompleted: true, status: "in_assessment", completedStepNumbers: [1, 2] }),
+  );
+  assert.equal(emptyAnswer.action.type, "listen");
+  assert.match(emptyAnswer.spokenText, /^I can't get you\./i);
+  assert.match(emptyAnswer.spokenText, /question 1 of 3/i);
+
+  const unclear = reduceAgent(
+    snap({ phase: "post_video", currentStepNumber: 1 }),
+    { type: "voice", intent: { type: "unknown", query: "maybe later banana" } },
+    ctx({ completedStepNumbers: [1], currentStepVideoCompleted: true }),
+  );
+  assert.equal(unclear.action.type, "listen");
+  assert.match(unclear.spokenText, /^I can't get you\./i);
+
+  const recovery = reduceAgent(
+    snap({ phase: "failed_recovery", currentStepNumber: 2 }),
+    { type: "voice", intent: { type: "empty" } },
+    ctx({ allStepsCompleted: true, status: "failed_retraining", completedStepNumbers: [1, 2] }),
+    "You did not pass. You can retake the assessment, or review a step.",
+  );
+  assert.equal(recovery.action.type, "listen");
+  assert.match(recovery.spokenText, /^I can't get you\./i);
 });

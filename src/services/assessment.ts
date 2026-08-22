@@ -15,6 +15,7 @@ import {
 } from "./gemini";
 import { allStepsCompleted, markAssessmentFailed } from "./progress";
 import { config } from "../config";
+import { formatRelatedStepAnswerKey } from "./assessmentScoring";
 
 function sopContext(training: SopDefinition): string {
   return formatSopContext({
@@ -593,6 +594,10 @@ export async function answerAssessmentQuestion(options: {
   let transcript = providedTranscript;
   let correct = false;
   let feedback = "";
+  const answerKey = formatRelatedStepAnswerKey(
+    training,
+    question.relatedStepNumbers || [],
+  );
 
   if (providedTranscript) {
     const evaluation = await evaluateTextAnswer({
@@ -600,6 +605,7 @@ export async function answerAssessmentQuestion(options: {
       questionText: question.questionText,
       relatedStepNumbers: question.relatedStepNumbers,
       transcript: providedTranscript,
+      answerKey,
     });
     correct = evaluation.correct;
     feedback = evaluation.feedback;
@@ -610,6 +616,7 @@ export async function answerAssessmentQuestion(options: {
       relatedStepNumbers: question.relatedStepNumbers,
       audioBase64: options.audioBase64,
       mimeType: options.mimeType,
+      answerKey,
     });
     if (result.emptyOrNoise) {
       return {

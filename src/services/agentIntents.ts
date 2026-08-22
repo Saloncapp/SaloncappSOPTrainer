@@ -56,7 +56,7 @@ const STOP_WORDS = new Set([
 const CONFIRM_RE =
   /\b(ok|okay|okey|yes|yeah|yep|yup|sure|start|begin|go ahead|lets go|let s go|proceed|continue|alright|all right|ready)\b/;
 const DECLINE_RE =
-  /\b(no|nope|nah|not now|not yet|not ready|not today|not right now|do not start|don t start|dont start|do not want|don t want|dont want|wait|later|hold on|hold up|maybe later)\b/;
+  /\b(no|nope|nah|not now|not yet|not ready|not today|not right now|do not start|don t start|dont start|do not want|don t want|dont want|no assessment|not take|don t take|dont take|wait|later|hold on|hold up|maybe later)\b/;
 const TA_CONFIRM_RE = /ஆம்|ஆமாம்|சரி|ஆரம்பி|தொடங்கு|தயார்/;
 const TA_DECLINE_RE = /இல்லை|வேண்டாம்|வேணாம்/;
 const HI_CONFIRM_RE = /हाँ|हां|जी हाँ|जी हां|ठीक|शुरू|तैयार/;
@@ -83,7 +83,11 @@ const HI_NEXT_RE = /अगला कदम|अगला स्टेप|अग�
 const NO_DOUBT_RE =
   /\b(no doubt|no doubts|no question|no questions|all clear|got it|understood|nothing else|that's clear|thats clear|i'm good|im good|clear|no thanks|nothing|no more questions)\b/;
 const QUESTION_RE =
-  /\b(what|why|how|when|where|can|should|is|are|does|do|could|would|explain|tell me|mean|difference)\b/;
+  /\b(what|whats|why|how|when|where|can|should|is|are|does|do|could|would|explain|tell me|mean|difference)\b/;
+const DOUBT_SEEKING_RE =
+  /\b(doubt|doubts|clarify|clarification|confused|confusion|unclear|not clear|don t understand|dont understand|do not understand|tell me about|ask about|question about|doubt about|doubt on)\b/;
+const EXPLICIT_NAV_RE =
+  /\b(play|watch|go to|goto|move to|open|rewatch|show me|review)\b/;
 const FILLER_ONLY_RE = /^(um+|uh+|er+|ah+|oh+|hmm+|mm+|mhm+|huh+|eh+|ha+|hm+)$/;
 
 export function looksLikeEmptyOrNoiseTranscript(transcript: string): boolean {
@@ -189,6 +193,112 @@ export function stripAgentPlaybackEcho(transcript: string): string {
     .trim();
 }
 
+function echoTokenList(text: string): string[] {
+  return normalizeText(stripAgentPlaybackEcho(text))
+    .split(" ")
+    .filter((token) => token.length > 1);
+}
+
+export function novelSpeechTokens(transcript: string, lastSpokenText: string): string[] {
+  const spokenSet = new Set(echoTokenList(lastSpokenText));
+  return echoTokenList(transcript).filter((token) => !spokenSet.has(token));
+}
+
+/**
+ * Peel agent prompt TTS off a transcript and keep any residual staff reply.
+ * Assessment answers often reuse question words — those stay when novel facts exist.
+ */
+export function extractStaffReplyFromAgentEcho(
+  transcript: string,
+  lastSpokenText: string,
+): { staffSpeech: string; echoOnly: boolean } {
+  const original = String(transcript || "").trim();
+  if (!original) return { staffSpeech: "", echoOnly: true };
+
+  const spokenRaw = normalizeText(lastSpokenText || "");
+  const heardRaw = normalizeText(stripAgentPlaybackEcho(original));
+  if (!spokenRaw) return { staffSpeech: original, echoOnly: false };
+
+  const novel = novelSpeechTokens(original, lastSpokenText);
+  if (novel.length >= 2) {
+    return { staffSpeech: original, echoOnly: false };
+  }
+
+  if (!looksLikeAgentEcho(original, lastSpokenText)) {
+    return { staffSpeech: original, echoOnly: false };
+  }
+
+  let residual = heardRaw;
+  if (spokenRaw && residual.includes(spokenRaw)) {
+    residual = residual.replace(spokenRaw, " ").replace(/\s+/g, " ").trim();
+  } else {
+    const sentences = String(lastSpokenText || "")
+      .split(/[.?!]+/)
+      .map((part) => normalizeText(part))
+      .filter((part) => part.length >= 12)
+      .sort((a, b) => b.length - a.length);
+    for (const sentence of sentences) {
+      if (residual.includes(sentence)) {
+        residual = residual.replace(sentence, " ").replace(/\s+/g, " ").trim();
+      }
+    }
+  }
+
+  residual = residual
+    .replace(/\bquestion\s+\d+\s+of\s+\d+\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!residual || residual.length < 3) {
+    return { staffSpeech: "", echoOnly: true };
+  }
+  if (novelSpeechTokens(residual, lastSpokenText).length === 0 && residual.length < 18) {
+    return { staffSpeech: "", echoOnly: true };
+  }
+  return { staffSpeech: residual, echoOnly: false };
+}
+
+/** True when STT captured the agent's own prompt (welcome/confirm echo), not staff speech. */
+export function looksLikeAgentEcho(transcript: string, lastSpokenText: string): boolean {
+  const heardRaw = normalizeText(stripAgentPlaybackEcho(transcript));
+  const spokenRaw = normalizeText(lastSpokenText || "");
+  if (!heardRaw || !spokenRaw) return false;
+
+  const heardTokens = echoTokenList(transcript);
+  const spokenTokens = echoTokenList(lastSpokenText);
+  if (heardTokens.length === 0 || spokenTokens.length === 0) return false;
+
+  // Staff added answer facts that are not in the prompt — not echo.
+  if (novelSpeechTokens(transcript, lastSpokenText).length >= 2) {
+    return false;
+  }
+
+  // Recapture of a long chunk / the full prompt — not a short staff command.
+  if (heardRaw.length >= 24 && spokenRaw.includes(heardRaw)) {
+    return heardRaw.length >= Math.min(spokenRaw.length, 48) * 0.45;
+  }
+  if (spokenRaw.length >= 24 && heardRaw.includes(spokenRaw)) return true;
+
+  const spokenSet = new Set(spokenTokens);
+  const overlap = heardTokens.filter((token) => spokenSet.has(token)).length;
+  const heardRatio = overlap / heardTokens.length;
+  const spokenCoverage =
+    spokenTokens.filter((token) => heardTokens.includes(token)).length / spokenTokens.length;
+  if (heardTokens.length >= 8 && heardRatio >= 0.8 && spokenCoverage >= 0.35) return true;
+
+  const sentences = String(lastSpokenText || "")
+    .split(/[.?!]+/)
+    .map((part) => normalizeText(part))
+    .filter((part) => part.length >= 12);
+  const last = sentences[sentences.length - 1] || "";
+  return Boolean(
+    last &&
+      heardRaw.length >= 12 &&
+      last.includes(heardRaw) &&
+      heardRaw.length >= last.length * 0.6,
+  );
+}
+
 function lastCapturedStep(matches: Iterable<RegExpMatchArray>): number | null {
   let found: number | null = null;
   for (const match of matches) {
@@ -280,21 +390,38 @@ function looksLikeNextUtterance(original: string, text: string): boolean {
 }
 
 const DOUBT_QUESTION_RE =
-  /\b(what|why|how|when|where|which|explain|tell me|mean|difference)\b/;
+  /\b(what|whats|why|how|when|where|which|explain|tell me|mean|difference)\b/;
 
 export function looksLikeQuestion(transcript: string): boolean {
   const original = String(transcript || "").trim();
   if (!original) return false;
   if (original.includes("?")) return true;
   const latin = normalizeText(original);
-  if (DOUBT_QUESTION_RE.test(latin)) return true;
-  if (/[\u0B80-\u0BFF]/.test(original) && /என்ன|எப்படி|ஏன்|எங்கே|எது|வேண்டு|பண்ண|செய்/.test(original)) {
+  if (DOUBT_QUESTION_RE.test(latin) || DOUBT_SEEKING_RE.test(latin)) return true;
+  if (/[\u0B80-\u0BFF]/.test(original) && /என்ன|எப்படி|ஏன்|எங்கே|எது|வேண்டு|பண்ண|செய்|சந்தேகம்/.test(original)) {
     return true;
   }
-  if (/[\u0900-\u097F]/.test(original) && /क्या|कैसे|क्यों|कहाँ|कब|कौन/.test(original)) {
+  if (/[\u0900-\u097F]/.test(original) && /क्या|कैसे|क्यों|कहाँ|कब|कौन|शक|समझ/.test(original)) {
     return true;
   }
   return false;
+}
+
+/** True when staff clearly asks to play/open a step, not to learn about it. */
+export function looksLikeExplicitStepNavigation(transcript: string): boolean {
+  const original = String(transcript || "").trim();
+  if (!original) return false;
+  if (looksLikePlayStepRequest(original)) return true;
+  if (isPreviousStepRequest(original)) return true;
+  const text = normalizeText(original);
+  if (!text) return false;
+  if (hasWord(text, REWATCH_RE) && !looksLikeQuestion(original)) return true;
+  if (!hasWord(text, EXPLICIT_NAV_RE)) return false;
+  // "can I watch step 1" / "play cleansing" → navigate. "explain skin analysis" → not.
+  if (looksLikeQuestion(original) && !looksLikePlayStepRequest(original)) {
+    return false;
+  }
+  return true;
 }
 
 export function hasNonLatinScript(transcript: string): boolean {
@@ -367,7 +494,7 @@ export function parseRuleIntent(
   if (
     stepNumber &&
     !looksLikeQuestion(original) &&
-    (looksLikeReviewRequest(text) || hasWord(text, REVIEW_RE) || looksLikeNextUtterance(original, text))
+    (looksLikeReviewRequest(text, original) || hasWord(text, REVIEW_RE) || looksLikeNextUtterance(original, text))
   ) {
     return { type: "review", query: transcript, stepNumber };
   }
@@ -380,6 +507,13 @@ export function parseRuleIntent(
     if (text && hasWord(text, NO_DOUBT_RE)) {
       return { type: "no_doubt" };
     }
+    // "No, don't start the assessment" must not become assessment/retake.
+    if (
+      looksLikeDecline(original) &&
+      (hasWord(text, ASSESSMENT_RE) || hasWord(text, RETAKE_RE))
+    ) {
+      return { type: "decline" };
+    }
     if (text && hasWord(text, REWATCH_RE) && !stepNumber) {
       return { type: "rewatch" };
     }
@@ -389,7 +523,7 @@ export function parseRuleIntent(
     if ((looksLikeNextUtterance(original, text) || hasWord(text, CONFIRM_RE)) && !looksLikeQuestion(original)) {
       return { type: "next" };
     }
-    if (text && hasWord(text, ASSESSMENT_RE) && !looksLikeQuestion(original)) {
+    if (text && hasWord(text, ASSESSMENT_RE) && !looksLikeQuestion(original) && !looksLikeDecline(original)) {
       return { type: "assessment" };
     }
     if (looksLikeQuestion(original)) {
@@ -398,7 +532,7 @@ export function parseRuleIntent(
     if (nativeScript) {
       return { type: "unknown", query: transcript };
     }
-    if (stepNumber || looksLikeReviewRequest(text)) {
+    if (stepNumber || looksLikeReviewRequest(text, original)) {
       return { type: "review", query: transcript, stepNumber };
     }
     if (text && hasWord(text, REWATCH_RE) && stepNumber) {
@@ -417,7 +551,7 @@ export function parseRuleIntent(
     if (looksLikeNextUtterance(original, text) || hasWord(text, CONFIRM_RE)) {
       return { type: "next" };
     }
-    if (stepNumber || looksLikeReviewRequest(text)) {
+    if (stepNumber || looksLikeReviewRequest(text, original)) {
       return { type: "review", query: transcript, stepNumber };
     }
     return { type: "unknown", query: transcript };
@@ -427,56 +561,89 @@ export function parseRuleIntent(
     if (looksLikeAssessmentConfirm(original)) {
       return { type: "assessment" };
     }
-    if (hasWord(text, REWATCH_RE) && !stepNumber && !looksLikeReviewRequest(text)) {
+    if (hasWord(text, REWATCH_RE) && !stepNumber && !looksLikeReviewRequest(text, original)) {
       return { type: "rewatch" };
     }
-    if (stepNumber || looksLikeReviewRequest(text) || hasWord(text, REVIEW_RE)) {
+    if (stepNumber || looksLikeReviewRequest(text, original) || hasWord(text, REVIEW_RE)) {
       return { type: "review", query: transcript, stepNumber };
     }
     return { type: "unknown", query: transcript };
   }
 
   if (expectedInput === "retake_or_review") {
+    if (looksLikeDecline(original)) {
+      return { type: "decline" };
+    }
     if (hasWord(text, RETAKE_RE) || hasWord(text, ASSESSMENT_RE)) {
       return { type: "retake" };
     }
-    if (hasWord(text, REWATCH_RE) && !stepNumber && !looksLikeReviewRequest(text)) {
+    if (hasWord(text, REWATCH_RE) && !stepNumber && !looksLikeReviewRequest(text, original)) {
       return { type: "rewatch" };
     }
     if (looksLikeNextUtterance(original, text) && !looksLikeQuestion(original)) {
       return { type: "next" };
     }
-    if (stepNumber || looksLikeReviewRequest(text) || hasWord(text, REVIEW_RE)) {
+    // Questions/doubts clear concepts — do not treat title mentions as play-step.
+    if (
+      looksLikeQuestion(original) &&
+      !looksLikeExplicitStepNavigation(original)
+    ) {
+      return { type: "doubt", query: transcript };
+    }
+    if (
+      stepNumber ||
+      looksLikeReviewRequest(text, original) ||
+      looksLikeExplicitStepNavigation(original)
+    ) {
       return { type: "review", query: transcript, stepNumber };
     }
-    if (looksLikeQuestion(original) || text.includes("?") || QUESTION_RE.test(text) || text.split(" ").length >= 5) {
+    if (text.includes("?") || QUESTION_RE.test(text) || text.split(" ").length >= 5) {
       return { type: "doubt", query: transcript };
     }
     return { type: "unknown", query: transcript };
   }
 
   if (expectedInput === "review_or_assessment") {
+    if (looksLikeDecline(original)) {
+      return { type: "decline" };
+    }
     if (looksLikeAssessmentConfirm(original) || hasWord(text, RETAKE_RE)) {
       return { type: "assessment" };
     }
-    if (hasWord(text, REWATCH_RE) && !stepNumber && !looksLikeReviewRequest(text)) {
+    if (hasWord(text, REWATCH_RE) && !stepNumber && !looksLikeReviewRequest(text, original)) {
       return { type: "rewatch" };
     }
-    if (stepNumber || looksLikeReviewRequest(text) || hasWord(text, REVIEW_RE)) {
+    if (
+      looksLikeQuestion(original) &&
+      !looksLikeExplicitStepNavigation(original)
+    ) {
+      return { type: "doubt", query: transcript };
+    }
+    if (
+      stepNumber ||
+      looksLikeReviewRequest(text, original) ||
+      looksLikeExplicitStepNavigation(original)
+    ) {
       return { type: "review", query: transcript, stepNumber };
     }
-    if (looksLikeQuestion(original) || text.includes("?") || QUESTION_RE.test(text)) {
+    if (text.includes("?") || QUESTION_RE.test(text)) {
       return { type: "doubt", query: transcript };
     }
     return { type: "unknown", query: transcript };
   }
 
   if (expectedInput === "confirm") {
+    if (looksLikeQuestion(original) || text.includes("?") || QUESTION_RE.test(text)) {
+      return { type: "doubt", query: transcript };
+    }
     if (hasWord(text, CONFIRM_RE) || looksLikeNextUtterance(original, text) || hasWord(text, ASSESSMENT_RE)) {
       return { type: "confirm" };
     }
     if (stepNumber || hasWord(text, REVIEW_RE) || looksLikePreviousUtterance(original, text)) {
       return { type: "review", query: transcript, stepNumber };
+    }
+    if (text.split(" ").length >= 5) {
+      return { type: "doubt", query: transcript };
     }
     return { type: "unknown", query: transcript };
   }
@@ -486,31 +653,36 @@ export function parseRuleIntent(
   if (hasWord(text, REWATCH_RE)) return { type: "rewatch" };
   if (looksLikeNextUtterance(original, text)) return { type: "next" };
   if (hasWord(text, CONFIRM_RE)) return { type: "confirm" };
-  if (stepNumber || looksLikeReviewRequest(text)) {
+  if (stepNumber || looksLikeReviewRequest(text, original)) {
     return { type: "review", query: transcript, stepNumber };
   }
   return { type: "unknown", query: transcript };
 }
 
-function looksLikeReviewRequest(text: string): boolean {
+function looksLikeReviewRequest(text: string, original = text): boolean {
+  if (looksLikeQuestion(original)) return false;
   if (extractStepNumber(text) != null) return true;
   if (hasWord(text, REVIEW_RE)) return true;
   if (hasWord(text, PREVIOUS_RE)) return true;
   const tokens = tokenize(text);
   if (tokens.length === 0) return false;
-  if (QUESTION_RE.test(text)) return false;
+  if (QUESTION_RE.test(text) || DOUBT_SEEKING_RE.test(text)) return false;
+  // Bare concept/title mention (e.g. "skin analysis") can mean review.
   return tokens.length >= 2;
 }
 
 export function looksLikeStepNavigation(transcript: string): boolean {
   const original = String(transcript || "");
-  if (looksLikeQuestion(original)) return false;
+  if (looksLikeQuestion(original) && !looksLikeExplicitStepNavigation(original)) {
+    return false;
+  }
+  if (looksLikeExplicitStepNavigation(original)) return true;
   const text = normalizeText(transcript);
   if (extractStepNumber(text) != null) return true;
   if (looksLikePreviousUtterance(original, text)) return true;
   if (looksLikeNextUtterance(original, text)) return true;
   if (hasWord(text, REWATCH_RE)) return true;
-  return looksLikeReviewRequest(text);
+  return looksLikeReviewRequest(text, original);
 }
 
 export type StepMatchResult = {

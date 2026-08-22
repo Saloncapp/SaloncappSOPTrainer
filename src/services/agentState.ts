@@ -74,6 +74,26 @@ export function isLastStep(ctx: AgentContext, stepNumber: number): boolean {
   return nextStepNumber(ctx, stepNumber) == null;
 }
 
+/**
+ * Matches progress lock rules: step N is playable when every earlier step is
+ * completed (step 1 is always unlocked). After pass/fail/all-done, any step is
+ * fair game.
+ */
+export function isStepUnlocked(ctx: AgentContext, stepNumber: number): boolean {
+  if (!stepByNumber(ctx, stepNumber)) return false;
+  if (
+    ctx.allStepsCompleted ||
+    ctx.status === "passed" ||
+    ctx.status === "failed_retraining"
+  ) {
+    return true;
+  }
+  const priors = ctx.steps
+    .filter((step) => step.stepNumber < stepNumber)
+    .sort((a, b) => a.stepNumber - b.stepNumber);
+  return priors.every((step) => ctx.completedStepNumbers.includes(step.stepNumber));
+}
+
 function result(
   snapshot: AgentSnapshot,
   spokenText: string,
@@ -294,15 +314,16 @@ export function questionPrompt(
   return `Question ${questionIndex} of ${total}. ${questionText}`;
 }
 
+const EMPTY_REPLY_PREFIX = "I can't get you.";
+
 function clarify(snapshot: AgentSnapshot, detail?: string): AgentReduceResult {
   return stay(
     snapshot,
-    detail ||
-      "I did not catch that. Please say that again, or tell me what you would like to do next.",
+    detail
+      ? `${EMPTY_REPLY_PREFIX} ${detail}`
+      : `${EMPTY_REPLY_PREFIX} Please say that again, or tell me what you would like to do next.`,
   );
 }
-
-const EMPTY_REPLY_PREFIX = "I can't get you.";
 
 function looksLikePlayVideoIntro(text: string): boolean {
   return /\bi(?:'|’)?ll play\b|\btraining video now\b/i.test(String(text || ""));
@@ -310,9 +331,18 @@ function looksLikePlayVideoIntro(text: string): boolean {
 
 function underlyingPrompt(text: string): string {
   let next = String(text || "").trim();
-  const prefix = EMPTY_REPLY_PREFIX.toLowerCase();
-  while (next.toLowerCase().startsWith(prefix)) {
-    next = next.slice(EMPTY_REPLY_PREFIX.length).trim();
+  const prefixes = [EMPTY_REPLY_PREFIX.toLowerCase(), "i can't get it."];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const lower = next.toLowerCase();
+    for (const prefix of prefixes) {
+      if (lower.startsWith(prefix)) {
+        next = next.slice(prefix.length).trim();
+        changed = true;
+        break;
+      }
+    }
   }
   return next;
 }
@@ -331,6 +361,9 @@ function phaseReprompt(
   const previous = underlyingPrompt(lastSpokenText);
   if (previous && !looksLikePlayVideoIntro(previous)) {
     return previous;
+  }
+  if (snapshot.phase === "in_assessment") {
+    return lastQuestionFallback();
   }
   if (snapshot.phase === "post_video") {
     return postWatchPrompt(
@@ -374,7 +407,7 @@ function emptyReply(
       snapshot.phase === "post_review") &&
     looksLikePostponeSpeech(lastSpokenText)
   ) {
-    return postponeAssessment(snapshot);
+    return postponeAssessment(snapshot, ctx);
   }
   return stay(
     snapshot,
@@ -445,7 +478,7 @@ export function reduceAgent(
     if (event.emptyOrNoise) {
       return stay(
         { ...current, phase: "in_assessment" },
-        `I did not catch an answer. ${questionPrompt(event.questionText, event.questionIndex, event.total)}`,
+        `${EMPTY_REPLY_PREFIX} ${questionPrompt(event.questionText, event.questionIndex, event.total)}`,
       );
     }
     return result(
@@ -477,8 +510,8 @@ export function reduceAgent(
 
   if (event.type === "doubt_answered") {
     const followUp =
-      current.phase === "post_review"
-        ? doubtFollowUpPrompt(ctx, current.currentStepNumber)
+      current.phase === "welcome"
+        ? `If you are ready, say yes to start step ${current.currentStepNumber}.`
         : doubtFollowUpPrompt(ctx, current.currentStepNumber);
     return stay(
       { ...current, navigationOffered: false },
@@ -843,6 +876,48 @@ function replayWatchedVideo(
   return beginStep(ctx, snapshot.currentStepNumber);
 }
 
+function laterStepBlockedMessage(
+  snapshot: AgentSnapshot,
+  ctx: AgentContext,
+): string {
+  const allowed = firstIncompleteStep(ctx);
+  if (
+    isLastStep(ctx, snapshot.currentStepNumber) &&
+    ctx.completedStepNumbers.includes(snapshot.currentStepNumber)
+  ) {
+    return "That step is later in the training. You can watch an earlier step, or say you are ready for the assessment.";
+  }
+  return `That step comes later. Let's continue with Step ${allowed} first.`;
+}
+
+/**
+ * Play a named step when unlocked (including the immediate next after a
+ * completed video). Rewatch completed steps; block jumping past unfinished work.
+ */
+function playRequestedStep(
+  snapshot: AgentSnapshot,
+  ctx: AgentContext,
+  stepNumber: number,
+): AgentReduceResult {
+  if (!stepByNumber(ctx, stepNumber)) {
+    return stay(snapshot, "I could not find that step.");
+  }
+
+  const alreadyDone = ctx.completedStepNumbers.includes(stepNumber);
+  const freeBrowse =
+    trainingPassed(ctx) || trainingFailed(ctx) || ctx.allStepsCompleted;
+
+  if (alreadyDone || freeBrowse) {
+    return beginReview(ctx, snapshot, stepNumber);
+  }
+
+  if (isStepUnlocked(ctx, stepNumber)) {
+    return beginStep(ctx, stepNumber);
+  }
+
+  return stay(snapshot, laterStepBlockedMessage(snapshot, ctx));
+}
+
 function handleReviewIntent(
   snapshot: AgentSnapshot,
   ctx: AgentContext,
@@ -882,7 +957,10 @@ function handleReviewIntent(
   }
   if (!stepNumber) {
     const candidates = (intent.candidates || []).filter(
-      (n) => anyCompletedStep || n <= snapshot.currentStepNumber,
+      (n) =>
+        anyCompletedStep ||
+        isStepUnlocked(ctx, n) ||
+        ctx.completedStepNumbers.includes(n),
     );
     if (candidates.length > 1) {
       return stay(
@@ -891,55 +969,15 @@ function handleReviewIntent(
       );
     }
     if (candidates.length === 1 && stepByNumber(ctx, candidates[0])) {
-      return beginReview(ctx, snapshot, candidates[0]);
+      return playRequestedStep(snapshot, ctx, candidates[0]);
     }
     return stay(
       snapshot,
       "I could not find that earlier step. Please say a step number or title you have already watched.",
     );
   }
-  if (stepNumber === snapshot.currentStepNumber && !snapshot.reviewStepNumber) {
-    if (anyCompletedStep) {
-      return beginReview(ctx, snapshot, stepNumber);
-    }
-    return beginStep(ctx, stepNumber);
-  }
-  if (stepNumber > snapshot.currentStepNumber) {
-    if (anyCompletedStep && stepByNumber(ctx, stepNumber)) {
-      return beginReview(ctx, snapshot, stepNumber);
-    }
-    const currentDone = ctx.completedStepNumbers.includes(snapshot.currentStepNumber);
-    const next = nextStepNumber(ctx, snapshot.currentStepNumber);
-    if (currentDone && next != null && stepNumber === next) {
-      return beginStep(ctx, stepNumber);
-    }
-    const allowed = currentDone ? next ?? snapshot.currentStepNumber : snapshot.currentStepNumber;
-    return stay(
-      snapshot,
-      isLastStep(ctx, snapshot.currentStepNumber)
-        ? "That step is later in the training. You can watch an earlier step, or say you are ready for the assessment."
-        : `That step comes later. Let's continue with Step ${allowed} first.`,
-    );
-  }
-  if (stepByNumber(ctx, stepNumber)) {
-    return beginReview(ctx, snapshot, stepNumber);
-  }
-  const candidates = (intent.candidates || []).filter(
-    (n) => anyCompletedStep || n <= snapshot.currentStepNumber,
-  );
-  if (candidates.length > 1) {
-    return stay(
-      snapshot,
-      `I found more than one match: ${titlesForSteps(ctx.steps, candidates)}. Which one should I play?`,
-    );
-  }
-  if (candidates.length === 1 && stepByNumber(ctx, candidates[0])) {
-    return beginReview(ctx, snapshot, candidates[0]);
-  }
-  return stay(
-    snapshot,
-    "I could not find that earlier step. Please say a step number or title you have already watched.",
-  );
+
+  return playRequestedStep(snapshot, ctx, stepNumber);
 }
 
 function onWelcomeVoice(
@@ -950,6 +988,14 @@ function onWelcomeVoice(
 ): AgentReduceResult {
   const review = handleReviewIntent(snapshot, ctx, intent);
   if (review) return review;
+  if (intent.type === "doubt") {
+    // Doubt answers are normally handled in agent.ts before reduce; if we land
+    // here, keep listening instead of treating the question as silence.
+    return stay(
+      snapshot,
+      "I am ready for your question. Ask about this step, or say yes when you want to start the video.",
+    );
+  }
   if (intent.type === "confirm" || intent.type === "next" || intent.type === "assessment") {
     return beginStep(ctx, snapshot.currentStepNumber);
   }
@@ -1002,18 +1048,32 @@ function onPostVideoVoice(
   );
 }
 
-function postponeAssessment(snapshot: AgentSnapshot): AgentReduceResult {
+function exitAfterAssessmentDecline(snapshot: AgentSnapshot): AgentReduceResult {
   return {
-    snapshot: {
-      phase: "awaiting_assessment",
-      currentStepNumber: snapshot.currentStepNumber,
-      reviewStepNumber: null,
-      navigationOffered: false,
-    },
+    snapshot: { ...snapshot, navigationOffered: false },
     expectedInput: "none",
     spokenText: assessmentDeclinePrompt(),
     action: { type: "idle" },
     speak: true,
+  };
+}
+
+function postponeAssessment(
+  snapshot: AgentSnapshot,
+  ctx?: AgentContext,
+): AgentReduceResult {
+  const failed =
+    Boolean(ctx && trainingFailed(ctx)) ||
+    snapshot.phase === "failed_recovery" ||
+    (snapshot.phase === "post_review" && Boolean(ctx && !trainingPassed(ctx)));
+  const exit = exitAfterAssessmentDecline(snapshot);
+  return {
+    ...exit,
+    snapshot: {
+      ...exit.snapshot,
+      phase: failed ? "failed_recovery" : "awaiting_assessment",
+      reviewStepNumber: null,
+    },
   };
 }
 
@@ -1023,7 +1083,7 @@ function onAwaitingAssessmentVoice(
   intent: ParsedIntent,
 ): AgentReduceResult {
   if (intent.type === "decline") {
-    return postponeAssessment(snapshot);
+    return postponeAssessment(snapshot, ctx);
   }
   const review = handleReviewIntent(snapshot, ctx, intent);
   if (review) return review;
@@ -1051,6 +1111,9 @@ function onPassedVoice(
   ctx: AgentContext,
   intent: ParsedIntent,
 ): AgentReduceResult {
+  if (intent.type === "decline" || intent.type === "exit") {
+    return exitAfterAssessmentDecline(snapshot);
+  }
   if (intent.type === "assessment" || intent.type === "retake") {
     return stay(snapshot, refuseRetakePrompt());
   }
@@ -1076,8 +1139,8 @@ function onFailedRecoveryVoice(
   ctx: AgentContext,
   intent: ParsedIntent,
 ): AgentReduceResult {
-  if (intent.type === "decline") {
-    return postponeAssessment(snapshot);
+  if (intent.type === "decline" || intent.type === "exit") {
+    return postponeAssessment(snapshot, ctx);
   }
   const review = handleReviewIntent(snapshot, ctx, intent);
   if (review) return review;
@@ -1107,6 +1170,13 @@ function onPostReviewVoice(
   ctx: AgentContext,
   intent: ParsedIntent,
 ): AgentReduceResult {
+  if (intent.type === "decline" || intent.type === "exit") {
+    if (trainingPassed(ctx)) {
+      return exitAfterAssessmentDecline(snapshot);
+    }
+    return postponeAssessment(snapshot, ctx);
+  }
+
   if (!snapshot.navigationOffered) {
     if (intent.type === "assessment" || intent.type === "retake") {
       if (trainingPassed(ctx)) {
@@ -1134,7 +1204,7 @@ function onPostReviewVoice(
       snapshot,
       trainingPassed(ctx)
         ? "Ask your question, rewatch this step, or name another step to watch."
-        : "Ask your question, say you have no doubts, or tell me when you are ready to continue.",
+        : "Ask your question, say you have no doubts, rewatch a step, or say when you want to retake the assessment. If you are not ready, say not now.",
     );
   }
 
@@ -1148,9 +1218,6 @@ function onPostReviewVoice(
   }
   if (intent.type === "next" && trainingPassed(ctx)) {
     return playNextReview(snapshot, ctx) || stay(snapshot, passedListenPrompt());
-  }
-  if (intent.type === "decline") {
-    return postponeAssessment(snapshot);
   }
   if (intent.type === "assessment" || intent.type === "confirm" || intent.type === "retake") {
     return result(snapshot, "", { type: "listen" }, false);

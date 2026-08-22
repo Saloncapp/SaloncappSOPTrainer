@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { extractStepNumber, isPreviousStepRequest, matchSteps, parseRuleIntent, scoreStep } from "./agentIntents";
+import { extractStepNumber, extractStaffReplyFromAgentEcho, isPreviousStepRequest, looksLikeAgentEcho, matchSteps, parseRuleIntent, scoreStep } from "./agentIntents";
 import type { AgentStepInfo, ExpectedInput } from "./agentTypes";
 
 const steps: AgentStepInfo[] = [
@@ -56,6 +56,51 @@ test("silence, fillers, and garbled welcome speech stay empty", () => {
   assert.equal(parseRuleIntent("ok", "confirm").type, "confirm");
   assert.equal(parseRuleIntent("foamy gel cleanser", "confirm").type, "unknown");
   assert.equal(parseRuleIntent("play step 1", "confirm").type, "review");
+});
+
+test("agent TTS echo of the welcome prompt is not a staff command", () => {
+  const welcome =
+    "Welcome to HydraFacial training. We can begin with step 1, Foamy Gel Cleanser. Shall we start?";
+  assert.equal(looksLikeAgentEcho(welcome, welcome), true);
+  assert.equal(looksLikeAgentEcho("Shall we start?", welcome), true);
+  assert.equal(looksLikeAgentEcho("we can begin with step 1", welcome), true);
+  assert.equal(looksLikeAgentEcho("yes", welcome), false);
+  assert.equal(looksLikeAgentEcho("start", welcome), false);
+  assert.equal(looksLikeAgentEcho("play step 1", welcome), false);
+});
+
+test("staff commands that appear in a prompt are not treated as echo", () => {
+  const postVideo =
+    "Step 1 is complete. Ask doubts, rewatch it, revisit an earlier step, or play the next step.";
+  assert.equal(looksLikeAgentEcho("next", postVideo), false);
+  assert.equal(looksLikeAgentEcho("play the next step", postVideo), false);
+  assert.equal(looksLikeAgentEcho("no doubts", postVideo), false);
+  assert.equal(
+    looksLikeAgentEcho(
+      "Ask doubts, rewatch it, revisit an earlier step, or play the next step.",
+      postVideo,
+    ),
+    true,
+  );
+});
+
+test("assessment answers reusing question words are kept, question read-back is not", () => {
+  const question =
+    "Question 1 of 5. What is the mixing ratio for AS1 used on normal to dry skin?";
+  assert.equal(
+    looksLikeAgentEcho("The mixing ratio for AS1 is one to ten", question),
+    false,
+  );
+  const answer = extractStaffReplyFromAgentEcho(
+    "The mixing ratio for AS1 is one to ten",
+    question,
+  );
+  assert.equal(answer.echoOnly, false);
+  assert.match(answer.staffSpeech, /one to ten/i);
+
+  const echo = extractStaffReplyFromAgentEcho(question, question);
+  assert.equal(echo.echoOnly, true);
+  assert.equal(echo.staffSpeech, "");
 });
 
 test("post-video ok means next, watch again means rewatch", () => {
@@ -157,6 +202,17 @@ test("assessment confirm and retake intents", () => {
     "doubt",
   );
   assert.equal(parseRuleIntent("play step 2", "retake_or_review").type, "review");
+  assert.equal(parseRuleIntent("what is cleansing", "retake_or_review").type, "doubt");
+  assert.equal(parseRuleIntent("explain skin analysis", "retake_or_review").type, "doubt");
+  assert.equal(parseRuleIntent("what is skin analysis", "retake_or_review").type, "doubt");
+  assert.equal(parseRuleIntent("tell me about cleansing", "retake_or_review").type, "doubt");
+  assert.equal(parseRuleIntent("I have a doubt on cleansing", "retake_or_review").type, "doubt");
+  assert.equal(parseRuleIntent("doubt about skin analysis", "retake_or_review").type, "doubt");
+  assert.equal(parseRuleIntent("whats cleansing", "retake_or_review").type, "doubt");
+  assert.equal(parseRuleIntent("skin analysis", "retake_or_review").type, "review");
+  assert.equal(parseRuleIntent("play cleansing", "retake_or_review").type, "review");
+  assert.equal(parseRuleIntent("watch skin analysis", "retake_or_review").type, "review");
+  assert.equal(parseRuleIntent("explain skin analysis", "review_or_assessment").type, "doubt");
 });
 
 test("assessment offer negatives are decline, not start", () => {
@@ -176,6 +232,21 @@ test("assessment offer negatives are decline, not start", () => {
     assert.equal(parseRuleIntent(phrase, "assessment_confirm").type, "decline", phrase);
   }
   assert.equal(parseRuleIntent("maybe", "assessment_confirm").type, "unknown");
+
+  for (const phrase of [
+    "no dont start the assessment",
+    "no don't start the assessment",
+    "dont start the assessment",
+    "not now",
+  ]) {
+    assert.equal(parseRuleIntent(phrase, "retake_or_review").type, "decline", phrase);
+    assert.equal(parseRuleIntent(phrase, "review_or_assessment").type, "decline", phrase);
+  }
+  assert.equal(
+    parseRuleIntent("no dont start the assessment", "doubt_or_navigate").type,
+    "decline",
+  );
+  assert.equal(parseRuleIntent("what is the mixing ratio", "confirm").type, "doubt");
 });
 
 test("assessment answers are not treated as confirmations", () => {

@@ -29,12 +29,16 @@ import {
 import {
   extractStepNumber,
   isPreviousStepRequest,
+  looksLikeAgentEcho,
+  extractStaffReplyFromAgentEcho,
   looksLikeDecline,
   looksLikeEmptyOrNoiseTranscript,
+  looksLikeExplicitStepNavigation,
   looksLikePlayStepRequest,
-  looksLikeStepNavigation,
+  looksLikeQuestion,
   matchSteps,
   parseRuleIntent,
+  stripAgentPlaybackEcho,
 } from "./agentIntents";
 import {
   bootstrap,
@@ -392,6 +396,19 @@ async function resolveIntent(options: {
   ) {
     return ruleIntent;
   }
+  // Question / doubt phrases must never become play-step, even if a title matches.
+  if (
+    looksLikeQuestion(transcript) &&
+    !looksLikeExplicitStepNavigation(transcript) &&
+    ruleIntent.type !== "retake" &&
+    ruleIntent.type !== "assessment" &&
+    ruleIntent.type !== "confirm" &&
+    ruleIntent.type !== "next" &&
+    ruleIntent.type !== "no_doubt" &&
+    ruleIntent.type !== "rewatch"
+  ) {
+    return { type: "doubt", query: transcript };
+  }
   if (
     looksLikeDecline(transcript) &&
     (expectedInput === "assessment_confirm" ||
@@ -520,6 +537,9 @@ async function resolveIntent(options: {
       return { type: "decline", query: transcript };
     }
     if (gemini.intent === "review") {
+      if (looksLikeQuestion(transcript) && !looksLikeExplicitStepNavigation(transcript)) {
+        return { type: "doubt", query: transcript };
+      }
       const matched = matchSteps(transcript, steps);
       const explicit = extractStepNumber(transcript);
       return {
@@ -771,6 +791,35 @@ export async function submitAgentTurn(options: {
   }
 
   if (!transcript && !options.audioBase64) {
+    if (session.phase === "in_assessment" && progress.status === "in_assessment") {
+      const attemptState = await getActiveAttempt(progress, options.auth, training);
+      const question = attemptState?.attempt
+        ? serializeAttempt(attemptState.attempt).nextQuestion
+        : null;
+      if (question && attemptState && !attemptState.attempt.completedAt) {
+        const reduced = reduceAgent(
+          snapshotFromSession(session),
+          {
+            type: "assessment_progress",
+            questionText: question.questionText,
+            questionIndex: question.index,
+            total: attemptState.attempt.questions.length,
+            emptyOrNoise: true,
+          },
+          ctx,
+          session.lastSpokenText,
+        );
+        applyResult(session, reduced);
+        await session.save();
+        return serializeTurn({
+          session,
+          training,
+          progress: attemptState.progress,
+          reduced,
+          assessment: serializeAttempt(attemptState.attempt),
+        });
+      }
+    }
     const reduced = reduceAgent(
       snapshotFromSession(session),
       { type: "voice", intent: { type: "empty" } },
@@ -788,6 +837,68 @@ export async function submitAgentTurn(options: {
       mimeType: options.mimeType,
     });
     if (stt.emptyOrNoise || looksLikeEmptyOrNoiseTranscript(stt.transcript)) {
+      transcript = "";
+    } else {
+      transcript = stt.transcript;
+    }
+  }
+
+  if (!transcript) {
+    if (session.phase === "in_assessment" && progress.status === "in_assessment") {
+      const attemptState = await getActiveAttempt(progress, options.auth, training);
+      const question = attemptState?.attempt
+        ? serializeAttempt(attemptState.attempt).nextQuestion
+        : null;
+      if (question && attemptState && !attemptState.attempt.completedAt) {
+        const reduced = reduceAgent(
+          snapshotFromSession(session),
+          {
+            type: "assessment_progress",
+            questionText: question.questionText,
+            questionIndex: question.index,
+            total: attemptState.attempt.questions.length,
+            emptyOrNoise: true,
+          },
+          ctx,
+          session.lastSpokenText,
+        );
+        applyResult(session, reduced);
+        await session.save();
+        return serializeTurn({
+          session,
+          training,
+          progress: attemptState.progress,
+          reduced,
+          assessment: serializeAttempt(attemptState.attempt),
+        });
+      }
+    }
+    const reduced = reduceAgent(
+      snapshotFromSession(session),
+      { type: "voice", intent: { type: "empty" } },
+      ctx,
+      session.lastSpokenText,
+    );
+    applyResult(session, reduced);
+    await session.save();
+    return serializeTurn({ session, training, progress, reduced });
+  }
+
+  transcript = stripAgentPlaybackEcho(transcript);
+
+  const inAssessment =
+    session.phase === "in_assessment" && progress.status === "in_assessment";
+
+  // Training only: peel agent TTS echo. Assessment accepts any staff speech
+  // (including reading the question) so it can be graded and the next question asked.
+  if (!inAssessment) {
+    const peeled = extractStaffReplyFromAgentEcho(transcript, session.lastSpokenText);
+    transcript = peeled.staffSpeech.trim();
+    if (
+      peeled.echoOnly ||
+      looksLikeEmptyOrNoiseTranscript(transcript) ||
+      looksLikeAgentEcho(transcript, session.lastSpokenText)
+    ) {
       const reduced = reduceAgent(
         snapshotFromSession(session),
         { type: "voice", intent: { type: "empty" } },
@@ -798,7 +909,43 @@ export async function submitAgentTurn(options: {
       await session.save();
       return serializeTurn({ session, training, progress, reduced });
     }
-    transcript = stt.transcript;
+  } else if (looksLikeEmptyOrNoiseTranscript(transcript)) {
+    const attemptState = await getActiveAttempt(progress, options.auth, training);
+    const question = attemptState?.attempt
+      ? serializeAttempt(attemptState.attempt).nextQuestion
+      : null;
+    if (question && attemptState && !attemptState.attempt.completedAt) {
+      const reduced = reduceAgent(
+        snapshotFromSession(session),
+        {
+          type: "assessment_progress",
+          questionText: question.questionText,
+          questionIndex: question.index,
+          total: attemptState.attempt.questions.length,
+          emptyOrNoise: true,
+        },
+        ctx,
+        session.lastSpokenText,
+      );
+      applyResult(session, reduced);
+      await session.save();
+      return serializeTurn({
+        session,
+        training,
+        progress: attemptState.progress,
+        reduced,
+        assessment: serializeAttempt(attemptState.attempt),
+      });
+    }
+    const reduced = reduceAgent(
+      snapshotFromSession(session),
+      { type: "voice", intent: { type: "empty" } },
+      ctx,
+      session.lastSpokenText,
+    );
+    applyResult(session, reduced);
+    await session.save();
+    return serializeTurn({ session, training, progress, reduced });
   }
 
   if (session.phase === "in_assessment" && progress.status === "in_assessment") {
@@ -825,18 +972,43 @@ export async function submitAgentTurn(options: {
     training,
   });
 
+  // Safety net: title-fuzzy "review" must not override a spoken question/doubt.
+  if (
+    intent.type === "review" &&
+    looksLikeQuestion(transcript) &&
+    !looksLikeExplicitStepNavigation(transcript)
+  ) {
+    intent = { type: "doubt", query: transcript };
+  }
+
   const shouldAnswerDoubt =
     (expectedInput === "doubt_or_navigate" ||
       expectedInput === "retake_or_review" ||
+      expectedInput === "review_or_assessment" ||
+      expectedInput === "confirm" ||
       snapshot.phase === "passed" ||
-      snapshot.phase === "failed_recovery") &&
-    !looksLikeStepNavigation(transcript) &&
+      snapshot.phase === "failed_recovery" ||
+      snapshot.phase === "welcome" ||
+      snapshot.phase === "post_review") &&
+    !looksLikeExplicitStepNavigation(transcript) &&
+    !looksLikeDecline(transcript) &&
     (intent.type === "doubt" ||
-      (intent.type === "unknown" && transcript.trim().length >= 4));
+      (intent.type === "unknown" && transcript.trim().length >= 4) ||
+      (intent.type === "review" && looksLikeQuestion(transcript)));
 
   if (shouldAnswerDoubt) {
+    const matched = matchSteps(transcript, training.steps.map((step) => ({
+      stepNumber: step.stepNumber,
+      title: step.title,
+      description: step.description,
+      importantPoints: step.importantPoints || [],
+      videoUrl: step.videoUrl,
+      videoDurationSeconds: step.videoDurationSeconds || 0,
+    })));
     const stepNumber =
-      snapshot.reviewStepNumber || snapshot.currentStepNumber;
+      matched.stepNumber ||
+      snapshot.reviewStepNumber ||
+      snapshot.currentStepNumber;
     const step = training.steps.find((s) => s.stepNumber === stepNumber);
     if (step) {
       try {
@@ -881,7 +1053,8 @@ export async function submitAgentTurn(options: {
 
   if (
     looksLikeDecline(transcript) &&
-    (snapshot.phase === "awaiting_assessment" ||
+    (snapshot.phase === "passed" ||
+      snapshot.phase === "awaiting_assessment" ||
       snapshot.phase === "post_review" ||
       snapshot.phase === "failed_recovery") &&
     intent.type !== "review"

@@ -3,9 +3,15 @@ import { config } from "../config";
 import type { SopStep } from "../data/sops/types";
 import { looksLikeEmptyOrNoiseTranscript } from "./agentIntents";
 import {
+  STRICT_ASSESSMENT_RUBRIC,
+  finalizeAssessmentCorrectness,
+} from "./assessmentScoring";
+import {
   multilingualUnderstandingRule,
+  speechMatchesResponseLanguage,
   type ResponseLanguage,
 } from "./responseLanguage";
+import { localizeKnownTrainerSpeech } from "./trainerSpeechLocale";
 
 const GEMINI_TIMEOUT_MS = 45000;
 const MAX_AUDIO_BASE64_CHARS = 8_000_000;
@@ -313,6 +319,8 @@ ${options.sopContext}
 
 Task: Generate exactly ${count} final assessment questions based ONLY on this SOP.
 Cover different steps where possible. Do NOT ask random general salon questions.
+Each question must require a specific SOP fact (ratio, duration, intensity, product, method, or named concern).
+Do not put that answer fact inside the question text itself.
 ${avoid}
 
 Return JSON:
@@ -434,6 +442,7 @@ export async function transcribeAndEvaluateAnswer(options: {
   relatedStepNumbers: number[];
   audioBase64: string;
   mimeType: string;
+  answerKey?: string;
 }): Promise<{
   transcript: string;
   emptyOrNoise: boolean;
@@ -447,19 +456,22 @@ export async function transcribeAndEvaluateAnswer(options: {
     prompt: `
 ${options.sopContext}
 
+${options.answerKey || ""}
+
 Current assessment question:
 "${options.questionText}"
 Related SOP steps: ${options.relatedStepNumbers.join(", ") || "n/a"}
 
 1) Carefully transcribe what the HUMAN said. They may speak Tamil, English, Hindi, or mix them. Transcribe in the original languages; do not translate. If silence/noise only, transcript must be "".
-2) Evaluate whether the answer demonstrates correct understanding based ONLY on the approved SOP.
-Accept natural wording / meaning matches in any language. Do not invent SOP content.
+2) Grade the answer using the rubric below. Ignore the general instruction to accept loose meaning matches for this task.
+
+${STRICT_ASSESSMENT_RUBRIC}
 
 Return JSON:
 {
   "transcript": "full careful transcription or empty string",
   "emptyOrNoise": false,
-  "correct": true,
+  "correct": false,
   "feedback": "short feedback"
 }
 `,
@@ -479,7 +491,13 @@ Return JSON:
   return {
     transcript,
     emptyOrNoise,
-    correct: emptyOrNoise ? false : Boolean(parsed.correct),
+    correct: emptyOrNoise
+      ? false
+      : finalizeAssessmentCorrectness({
+          questionText: options.questionText,
+          transcript,
+          modelCorrect: Boolean(parsed.correct),
+        }),
     feedback: String(parsed.feedback || "").trim(),
   };
   } catch {
@@ -497,22 +515,30 @@ export async function evaluateTextAnswer(options: {
   questionText: string;
   relatedStepNumbers: number[];
   transcript: string;
+  answerKey?: string;
 }): Promise<{ correct: boolean; feedback: string }> {
   const parsed = (await generateJson(`
 ${options.sopContext}
 
+${options.answerKey || ""}
+
 Question: ${options.questionText}
 Related steps: ${options.relatedStepNumbers.join(", ") || "n/a"}
-Staff answer transcript: ${options.transcript}
+Staff answer transcript: ${JSON.stringify(options.transcript)}
 
-Evaluate based ONLY on the approved SOP. Accept meaning matches in any language (Tamil, English, Hindi, or mixed).
+Ignore the general instruction to accept loose meaning matches for this task.
+${STRICT_ASSESSMENT_RUBRIC}
 
 Return JSON:
-{ "correct": true, "feedback": "short feedback" }
+{ "correct": false, "feedback": "short feedback" }
 `)) as { correct?: boolean; feedback?: string };
 
   return {
-    correct: Boolean(parsed.correct),
+    correct: finalizeAssessmentCorrectness({
+      questionText: options.questionText,
+      transcript: options.transcript,
+      modelCorrect: Boolean(parsed.correct),
+    }),
     feedback: String(parsed.feedback || "").trim(),
   };
 }
@@ -614,8 +640,10 @@ Valid intents: confirm, next, rewatch, assessment, retake, review, exit, replay,
 If expected reply is assessment_confirm, review_or_assessment, or retake_or_review:
 - confirm/assessment only for explicit yes/ready/start (ஆம், हाँ included).
 - decline for no/not yet/later (இல்லை, வேண்டாம், नहीं included).
-If they ask a question about a step, unknown. If they ask to play a step, review plus stepNumber.
+If they ask a question about a step or concept (what/why/how/explain/tell me/doubt about), use unknown — never review.
+If they ask to play/watch/go to a step, review plus stepNumber.
 If expected reply is retake_or_review, retake only for explicit retake/try again/assessment. Questions stay unknown.
+Bare step titles without play/watch verbs may be review. Questions that mention a title stay unknown.
 If unsure, unknown and confidence below 0.5.
 
 Return JSON:
@@ -729,6 +757,27 @@ Return JSON:
 
 const localizeCache = new Map<string, string>();
 
+function rewritePrompt(text: string, responseLanguage: ResponseLanguage, strict = false): string {
+  const name = responseLanguage === "hi" ? "Hindi" : "Tamil";
+  const script =
+    responseLanguage === "hi"
+      ? "Hindi in Devanagari script (Unicode 0900-097F) only. Never write Telugu, Malayalam, Kannada, or Tamil."
+      : "Tamil in Tamil script only. Never write Hindi, Telugu, Malayalam, or Kannada.";
+  return `
+${multilingualUnderstandingRule(responseLanguage)}
+
+Rewrite this trainer line for spoken playback in ${name}.
+Keep facts, step numbers, product names, and timings. Do not add SOP content.
+Output must be ${script}
+${strict ? `The previous draft used the wrong language. Write ${name} only.` : ""}
+
+${JSON.stringify(text)}
+
+Return JSON:
+{ "speech": "rewritten spoken utterance" }
+`;
+}
+
 export async function localizeTrainerSpeech(options: {
   text: string;
   responseLanguage: ResponseLanguage;
@@ -737,27 +786,36 @@ export async function localizeTrainerSpeech(options: {
   if (!text) return "";
   if (options.responseLanguage === "en") return text;
 
+  const known = localizeKnownTrainerSpeech(text, options.responseLanguage);
+  if (known) return known;
+
   const cacheKey = `${options.responseLanguage}::${text}`;
   const cached = localizeCache.get(cacheKey);
-  if (cached) return cached;
+  if (cached && speechMatchesResponseLanguage(cached, options.responseLanguage)) {
+    return cached;
+  }
+  if (cached) localizeCache.delete(cacheKey);
+
+  const tryRewrite = async (strict: boolean) => {
+    const parsed = (await generateJson(
+      rewritePrompt(text, options.responseLanguage, strict),
+      220,
+    )) as { speech?: string };
+    return String(parsed.speech || "").trim();
+  };
 
   try {
-    const parsed = (await generateJson(`
-${multilingualUnderstandingRule(options.responseLanguage)}
-
-Rewrite this trainer line for spoken playback in the selected response language.
-Keep facts, step numbers, product names, and timings. Do not add SOP content.
-
-${JSON.stringify(text)}
-
-Return JSON:
-{ "speech": "rewritten spoken utterance" }
-`, 220)) as { speech?: string };
-    const speech = String(parsed.speech || "").trim() || text;
-    localizeCache.set(cacheKey, speech);
-    return speech;
+    let speech = await tryRewrite(false);
+    if (!speechMatchesResponseLanguage(speech, options.responseLanguage)) {
+      speech = await tryRewrite(true);
+    }
+    if (speechMatchesResponseLanguage(speech, options.responseLanguage)) {
+      localizeCache.set(cacheKey, speech);
+      return speech;
+    }
   } catch {
-    return text;
+    // Fall through to English rather than speaking the wrong Indian language.
   }
+  return text;
 }
 
