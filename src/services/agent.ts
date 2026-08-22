@@ -62,14 +62,29 @@ import type {
 } from "./agentTypes";
 import { IStaffTrainingProgress } from "../models/StaffTrainingProgress";
 import { normalizeResponseLanguage, type ResponseLanguage } from "./responseLanguage";
+import { detectSpeechScript, langLog, speechPreview } from "./langDebug";
 
 function sessionLanguage(session: IAgentSession): ResponseLanguage {
   return normalizeResponseLanguage(session.responseLanguage);
 }
 
 function applySessionLanguage(session: IAgentSession, value: unknown): void {
-  if (value === undefined || value === null || value === "") return;
+  if (value === undefined || value === null || value === "") {
+    langLog("session.language.skip", {
+      sessionId: String(session._id),
+      current: sessionLanguage(session),
+      raw: value,
+    });
+    return;
+  }
+  const previous = sessionLanguage(session);
   session.responseLanguage = normalizeResponseLanguage(value);
+  langLog("session.language.set", {
+    sessionId: String(session._id),
+    raw: value,
+    previous,
+    next: session.responseLanguage,
+  });
 }
 
 async function localizeOutput(
@@ -235,6 +250,19 @@ async function serializeTurn(options: {
   const recoveryMessage = options.recoveryMessage
     ? await localizeOutput(session, options.recoveryMessage)
     : undefined;
+  langLog("turn.serialize", {
+    sessionId: String(session._id),
+    trainingSlug: training.slug,
+    phase: reduced.snapshot.phase,
+    action: reduced.action.type,
+    speak: reduced.speak,
+    responseLanguage: sessionLanguage(session),
+    sourceScript: detectSpeechScript(spokenSource),
+    outputScript: detectSpeechScript(spokenText),
+    sourcePreview: speechPreview(spokenSource),
+    outputPreview: speechPreview(spokenText),
+    localized: spokenSource !== spokenText,
+  });
   return {
     sessionId: String(session._id),
     responseId: `${String(session._id)}-${session.utteranceSeq}`,
@@ -726,6 +754,13 @@ export async function submitAgentTurn(options: {
   let ctx = buildContext(training, progress, session.currentStepNumber);
 
   if (options.languageOnly) {
+    langLog("turn.languageOnly", {
+      sessionId: String(session._id),
+      responseLanguage: sessionLanguage(session),
+      phase: session.phase,
+      lastSpokenScript: detectSpeechScript(session.lastSpokenText || ""),
+      lastSpokenPreview: speechPreview(session.lastSpokenText || ""),
+    });
     if (session.phase === "playing_video" || session.phase === "playing_review") {
       await session.save();
       return ignoredDuringVideoTurn({ session, training, progress });

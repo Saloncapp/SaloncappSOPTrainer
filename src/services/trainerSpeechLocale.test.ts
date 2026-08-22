@@ -8,6 +8,9 @@ test("welcome back localizes to Hindi Devanagari, not South Indian scripts", () 
     "Welcome back to HydraFacial training. You completed step 2, Cleanser (Using hands). Would you like to resume with step 3, Gentle Scrub / Exfoliation?";
   const hi = localizeKnownTrainerSpeech(en, "hi");
   assert.ok(hi);
+  assert.match(hi, /^वापस/);
+  assert.match(hi, /हाइड्राफेशियल/);
+  assert.doesNotMatch(hi, /HydraFacial/);
   assert.match(hi, /वापस स्वागत/);
   assert.ok(speechMatchesResponseLanguage(hi, "hi"));
   assert.equal(speechMatchesResponseLanguage(hi, "ta"), false);
@@ -34,4 +37,17 @@ test("Tamil welcome uses Tamil script only", () => {
   assert.ok(ta);
   assert.ok(speechMatchesResponseLanguage(ta, "ta"));
   assert.equal(speechMatchesResponseLanguage(ta, "hi"), false);
+});
+
+test("Tamil resume prompt starts in Tamil and translates step titles", () => {
+  const en =
+    "Welcome back to HydraFacial training. You completed step 2, Cleanser (Using hands). Would you like to resume with step 3, Gentle Scrub / Exfoliation?";
+  const ta = localizeKnownTrainerSpeech(en, "ta");
+  assert.ok(ta);
+  assert.match(ta, /^மீண்டும்/);
+  assert.match(ta, /ஹைட்ராஃபேஷியல்/);
+  assert.match(ta, /கைகளால் சுத்தம் செய்தல்/);
+  assert.doesNotMatch(ta, /HydraFacial/);
+  assert.doesNotMatch(ta, /Cleanser/);
+  assert.ok(speechMatchesResponseLanguage(ta, "ta"));
 });

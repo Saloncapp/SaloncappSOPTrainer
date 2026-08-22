@@ -7,11 +7,16 @@ import {
   finalizeAssessmentCorrectness,
 } from "./assessmentScoring";
 import {
+  ensureTargetScriptLead,
   multilingualUnderstandingRule,
   speechMatchesResponseLanguage,
   type ResponseLanguage,
 } from "./responseLanguage";
-import { localizeKnownTrainerSpeech } from "./trainerSpeechLocale";
+import {
+  applySpokenLabels,
+  localizeKnownTrainerSpeech,
+} from "./trainerSpeechLocale";
+import { detectSpeechScript, langLog, speechPreview } from "./langDebug";
 
 const GEMINI_TIMEOUT_MS = 45000;
 const MAX_AUDIO_BASE64_CHARS = 8_000_000;
@@ -421,6 +426,13 @@ Return JSON:
   const transcript = String(parsed.transcript || "").trim();
   const emptyOrNoise =
     Boolean(parsed.emptyOrNoise) || looksLikeEmptyOrNoiseTranscript(transcript);
+  langLog("stt.transcribe", {
+    classify,
+    emptyOrNoise,
+    script: detectSpeechScript(transcript),
+    preview: speechPreview(transcript),
+    intent: classify && !emptyOrNoise ? parsed.intent : undefined,
+  });
   if (!classify || emptyOrNoise) {
     return { transcript, emptyOrNoise };
   }
@@ -431,7 +443,10 @@ Return JSON:
     stepNumber: parsed.stepNumber ?? null,
     confidence: Math.max(0, Math.min(1, Number(parsed.confidence) || 0)),
   };
-  } catch {
+  } catch (error) {
+    langLog("stt.transcribe.error", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return { transcript: "", emptyOrNoise: true };
   }
 }
@@ -763,13 +778,19 @@ function rewritePrompt(text: string, responseLanguage: ResponseLanguage, strict 
     responseLanguage === "hi"
       ? "Hindi in Devanagari script (Unicode 0900-097F) only. Never write Telugu, Malayalam, Kannada, or Tamil."
       : "Tamil in Tamil script only. Never write Hindi, Telugu, Malayalam, or Kannada.";
+  const brands =
+    responseLanguage === "hi"
+      ? "Transliterate English brand names into Devanagari (HydraFacial → हाइड्राफेशियल). Translate step titles into Hindi. Do not leave English words in Latin letters."
+      : "Transliterate English brand names into Tamil script (HydraFacial → ஹைட்ராஃபேஷியல்). Translate step titles into Tamil. Do not leave English words in Latin letters.";
   return `
 ${multilingualUnderstandingRule(responseLanguage)}
 
 Rewrite this trainer line for spoken playback in ${name}.
-Keep facts, step numbers, product names, and timings. Do not add SOP content.
+Keep step numbers and timings as digits. Do not add SOP content.
+${brands}
+The first letter of "speech" must be in ${name} script so text-to-speech stays in ${name}.
 Output must be ${script}
-${strict ? `The previous draft used the wrong language. Write ${name} only.` : ""}
+${strict ? `The previous draft used Latin English or the wrong language. Write ${name} script only.` : ""}
 
 ${JSON.stringify(text)}
 
@@ -778,20 +799,50 @@ Return JSON:
 `;
 }
 
+function finalizeLocalizedSpeech(
+  speech: string,
+  responseLanguage: ResponseLanguage,
+): string {
+  return ensureTargetScriptLead(
+    applySpokenLabels(speech, responseLanguage),
+    responseLanguage,
+  );
+}
+
 export async function localizeTrainerSpeech(options: {
   text: string;
   responseLanguage: ResponseLanguage;
 }): Promise<string> {
   const text = String(options.text || "").trim();
   if (!text) return "";
-  if (options.responseLanguage === "en") return text;
+  if (options.responseLanguage === "en") {
+    langLog("localize.passthrough", {
+      responseLanguage: "en",
+      script: detectSpeechScript(text),
+      preview: speechPreview(text),
+    });
+    return text;
+  }
 
   const known = localizeKnownTrainerSpeech(text, options.responseLanguage);
-  if (known) return known;
+  if (known) {
+    langLog("localize.known", {
+      responseLanguage: options.responseLanguage,
+      sourceScript: detectSpeechScript(text),
+      outputScript: detectSpeechScript(known),
+      preview: speechPreview(known),
+    });
+    return known;
+  }
 
   const cacheKey = `${options.responseLanguage}::${text}`;
   const cached = localizeCache.get(cacheKey);
   if (cached && speechMatchesResponseLanguage(cached, options.responseLanguage)) {
+    langLog("localize.cache", {
+      responseLanguage: options.responseLanguage,
+      outputScript: detectSpeechScript(cached),
+      preview: speechPreview(cached),
+    });
     return cached;
   }
   if (cached) localizeCache.delete(cacheKey);
@@ -799,22 +850,53 @@ export async function localizeTrainerSpeech(options: {
   const tryRewrite = async (strict: boolean) => {
     const parsed = (await generateJson(
       rewritePrompt(text, options.responseLanguage, strict),
-      220,
+      360,
     )) as { speech?: string };
-    return String(parsed.speech || "").trim();
+    return finalizeLocalizedSpeech(
+      String(parsed.speech || "").trim(),
+      options.responseLanguage,
+    );
   };
 
   try {
     let speech = await tryRewrite(false);
-    if (!speechMatchesResponseLanguage(speech, options.responseLanguage)) {
+    const firstMatch = speechMatchesResponseLanguage(speech, options.responseLanguage);
+    langLog("localize.gemini", {
+      responseLanguage: options.responseLanguage,
+      strict: false,
+      match: firstMatch,
+      outputScript: detectSpeechScript(speech),
+      preview: speechPreview(speech),
+    });
+    if (!firstMatch) {
       speech = await tryRewrite(true);
+      langLog("localize.gemini", {
+        responseLanguage: options.responseLanguage,
+        strict: true,
+        match: speechMatchesResponseLanguage(speech, options.responseLanguage),
+        outputScript: detectSpeechScript(speech),
+        preview: speechPreview(speech),
+      });
     }
     if (speechMatchesResponseLanguage(speech, options.responseLanguage)) {
       localizeCache.set(cacheKey, speech);
       return speech;
     }
-  } catch {
-    // Fall through to English rather than speaking the wrong Indian language.
+    langLog("localize.fallback-english", {
+      responseLanguage: options.responseLanguage,
+      reason: "rewrite-did-not-match",
+      sourceScript: detectSpeechScript(text),
+      rewriteScript: detectSpeechScript(speech),
+      preview: speechPreview(text),
+    });
+  } catch (error) {
+    langLog("localize.fallback-english", {
+      responseLanguage: options.responseLanguage,
+      reason: "gemini-error",
+      error: error instanceof Error ? error.message : String(error),
+      sourceScript: detectSpeechScript(text),
+      preview: speechPreview(text),
+    });
   }
   return text;
 }

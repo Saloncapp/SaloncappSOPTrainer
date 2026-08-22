@@ -1,6 +1,7 @@
 import { Router, Response } from "express";
 import { AuthedRequest, requireStaffAuth } from "../middleware/auth";
 import { errorMessage, errorStatus } from "../errors";
+import { langLog } from "../services/langDebug";
 import {
   abandonAgentSession,
   completeAgentVideo,
@@ -13,10 +14,16 @@ const router = Router({ mergeParams: true });
 router.post("/session", requireStaffAuth, async (req, res: Response) => {
   try {
     const auth = (req as AuthedRequest).auth;
+    const responseLanguage = req.body?.responseLanguage ?? req.body?.response_language;
+    langLog("http.session", {
+      trainingId: req.params.id,
+      staffId: auth.staffId,
+      responseLanguage: responseLanguage ?? null,
+    });
     const data = await startOrResumeAgentSession({
       auth,
       trainingId: req.params.id,
-      responseLanguage: req.body?.responseLanguage ?? req.body?.response_language,
+      responseLanguage,
     });
     res.json({ success: true, data });
   } catch (err) {
@@ -36,6 +43,14 @@ router.post("/turn", requireStaffAuth, async (req, res: Response) => {
     const hasTranscriptField = transcript !== undefined && transcript !== null;
     const hasAudio = Boolean(audioBase64 && mimeType);
     const languageOnly = Boolean(responseLanguage) && !hasTranscriptField && !hasAudio;
+    langLog("http.turn", {
+      trainingId: req.params.id,
+      staffId: auth.staffId,
+      responseLanguage: responseLanguage ?? null,
+      hasTranscript: hasTranscriptField,
+      hasAudio,
+      languageOnly,
+    });
     if (!hasTranscriptField && !hasAudio && !languageOnly) {
       res.status(400).json({
         success: false,
@@ -68,6 +83,12 @@ router.post("/video-complete", requireStaffAuth, async (req, res: Response) => {
       ended,
       responseLanguage = req.body?.response_language,
     } = req.body || {};
+    langLog("http.video-complete", {
+      trainingId: req.params.id,
+      staffId: auth.staffId,
+      responseLanguage: responseLanguage ?? null,
+      stepNumber: req.body?.stepNumber ?? null,
+    });
     if (!Number(stepNumber)) {
       res.status(400).json({ success: false, error: "stepNumber is required" });
       return;

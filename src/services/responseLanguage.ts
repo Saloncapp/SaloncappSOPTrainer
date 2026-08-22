@@ -51,6 +51,24 @@ const SCRIPT = {
   malayalam: /[\u0D00-\u0D7F]/,
 };
 
+const FIRST_LETTER = /[A-Za-z\u0900-\u097F\u0B80-\u0BFF]/;
+
+/** Android TTS follows the first letters; English-first mixed lines are spoken in English. */
+export function ensureTargetScriptLead(
+  text: string,
+  responseLanguage: ResponseLanguage,
+): string {
+  const value = String(text || "").trim();
+  if (!value || responseLanguage === "en") return value;
+  const match = value.match(FIRST_LETTER);
+  if (!match) return value;
+  const ch = match[0];
+  if (responseLanguage === "ta" && SCRIPT.tamil.test(ch)) return value;
+  if (responseLanguage === "hi" && SCRIPT.devanagari.test(ch)) return value;
+  const lead = responseLanguage === "ta" ? "கேளுங்கள். " : "सुनिए. ";
+  return `${lead}${value}`;
+}
+
 export function speechMatchesResponseLanguage(
   text: string,
   responseLanguage: ResponseLanguage,
