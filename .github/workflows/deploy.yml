@@ -184,7 +184,7 @@ jobs:
             # Only inspect/restart saloncapp-sop-trainer — never pm2 kill (that would
             # take down SaloncappRepo apps sharing this PM2 daemon).
             check_sop_pm2_health() {
-              APP_NAME="$APP_NAME" pm2 jlist | node -e '
+              pm2 jlist | APP_NAME="$APP_NAME" node -e '
               const fs = require("fs");
               const apps = JSON.parse(fs.readFileSync(0, "utf8") || "[]");
               const name = process.env.APP_NAME;
@@ -209,7 +209,7 @@ jobs:
             # PM2 reload does not update cwd; after an atomic symlink deploy the
             # process can keep running from an old release dir.
             check_sop_pm2_cwd() {
-              CURRENT_DIR="$APP_ROOT/current" APP_NAME="$APP_NAME" pm2 jlist | node -e '
+              pm2 jlist | APP_NAME="$APP_NAME" CURRENT_DIR="$APP_ROOT/current" node -e '
               const fs = require("fs");
               const apps = JSON.parse(fs.readFileSync(0, "utf8") || "[]");
               const name = process.env.APP_NAME;
