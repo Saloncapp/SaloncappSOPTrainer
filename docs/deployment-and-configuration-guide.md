@@ -408,5 +408,6 @@ pm2 logs saloncapp-sop-trainer --lines 80 --nostream
 - The Training service should not write to the main Saloncapp database.
 - The Training service must use the same `NEXTAUTH_SECRET` as `SaloncappRepo` so Staff JWT validation works.
 - The Staff app should send the existing Staff JWT and `x-tenant-id` header to the Training service.
-- If `SaloncappRepo` and `SaloncappSOPTrainer` run under the same Linux user and the same PM2 daemon, any `pm2 kill` command from the SaloncappRepo deployment can stop the SOP Trainer too. Prefer either a separate deploy/Linux user for SOP Trainer, or update the SaloncappRepo deploy script so it restarts only its managed app names instead of killing the entire PM2 daemon.
+- If `SaloncappRepo` and `SaloncappSOPTrainer` run under the same Linux user and the same PM2 daemon, `pm2 kill` from the SaloncappRepo deploy still stops SOP Trainer. SaloncappRepo's `hard_restart` then cold-starts `~/SaloncappSOPTrainer/current` again when that ecosystem file exists. Keep SOP Trainer installed under that path so Repo deploys can restore it.
+- SOP Trainer deploy never runs `pm2 kill`. On stale PM2 state, stale cwd, or failed `/health`, it deletes and cold-starts only `saloncapp-sop-trainer`, leaving SaloncappRepo processes untouched.
 - Add monitoring later for `/health`, process uptime, and PM2 logs.
