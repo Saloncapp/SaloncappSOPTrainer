@@ -177,25 +177,113 @@ jobs:
             ln -sfn "$RELEASE_DIR" "$APP_ROOT/current"
 
             cd "$APP_ROOT/current"
-            pm2 startOrReload ecosystem.config.js --update-env
 
             HEALTH_PORT="$(awk -F= 'BEGIN { port="4010" } /^[[:space:]]*PORT=/ { value=$0; sub(/^[^=]*=/, "", value); gsub(/^[[:space:]]+|[[:space:]]+$/, "", value); if (value != "") port=value } END { print port }' "$APP_ROOT/shared/.env")"
             HEALTH_URL="http://127.0.0.1:${HEALTH_PORT}/health"
 
-            for attempt in 1 2 3 4 5; do
-              echo "Checking ${HEALTH_URL} (attempt ${attempt}/5)..."
-              if curl -fsS --max-time 5 "$HEALTH_URL"; then
-                echo "SOP Trainer health check passed"
-                pm2 save
-                rm -f "$ARCHIVE"
-                cd "$APP_ROOT/releases"
-                ls -dt ${APP_NAME}-* 2>/dev/null | tail -n +6 | xargs -r rm -rf
-                pm2 status
-                exit 0
-              fi
-              sleep 5
-            done
+            # Only inspect/restart saloncapp-sop-trainer — never pm2 kill (that would
+            # take down SaloncappRepo apps sharing this PM2 daemon).
+            check_sop_pm2_health() {
+              APP_NAME="$APP_NAME" pm2 jlist | node -e '
+              const fs = require("fs");
+              const apps = JSON.parse(fs.readFileSync(0, "utf8") || "[]");
+              const name = process.env.APP_NAME;
+              const app = apps.find((entry) => entry.name === name);
+              if (!app) {
+                console.log(`Missing PM2 app: ${name}`);
+                process.exit(1);
+              }
+              const status = app.pm2_env && app.pm2_env.status;
+              const pid = app.pid ?? (app.pm2_env && app.pm2_env.pm_pid);
+              const memory = Number((app.monit && app.monit.memory) || 0);
+              const zeroMemoryGhost = status === "online" && memory <= 0;
+              if (!pid || status === "stopped" || status === "errored" || zeroMemoryGhost) {
+                console.log(
+                  `Broken PM2 app: ${name}:${status || "unknown"}:pid=${pid || "n/a"}:mem=${app.monit?.memory ?? "n/a"}`
+                );
+                process.exit(1);
+              }
+              '
+            }
 
-            echo "::error::SOP Trainer health check failed after deploy"
-            pm2 logs "$APP_NAME" --lines 80 --nostream || true
-            exit 1
+            # PM2 reload does not update cwd; after an atomic symlink deploy the
+            # process can keep running from an old release dir.
+            check_sop_pm2_cwd() {
+              CURRENT_DIR="$APP_ROOT/current" APP_NAME="$APP_NAME" pm2 jlist | node -e '
+              const fs = require("fs");
+              const apps = JSON.parse(fs.readFileSync(0, "utf8") || "[]");
+              const name = process.env.APP_NAME;
+              const current = process.env.CURRENT_DIR;
+              const app = apps.find((entry) => entry.name === name);
+              if (!app) {
+                console.log(`Missing PM2 app: ${name}`);
+                process.exit(1);
+              }
+              const cwd = app.pm2_env && app.pm2_env.pm_cwd;
+              if (cwd !== current) {
+                console.log(`Stale PM2 cwd for ${name} (expected ${current}): ${cwd || "n/a"}`);
+                process.exit(1);
+              }
+              '
+            }
+
+            check_sop_health() {
+              if curl -fsS --max-time 5 "$HEALTH_URL"; then
+                echo "SOP Trainer health check passed: $HEALTH_URL"
+                return 0
+              fi
+              echo "SOP Trainer health check failed: $HEALTH_URL"
+              return 1
+            }
+
+            # Delete + cold-start only saloncapp-sop-trainer. Never use pm2 kill.
+            hard_restart_sop() {
+              echo "Performing SOP Trainer hard restart (delete + cold start only)..."
+              pm2 status || true
+              pm2 delete "$APP_NAME" 2>/dev/null || true
+              fuser -k "${HEALTH_PORT}/tcp" 2>/dev/null || true
+              sleep 2
+              pm2 start ecosystem.config.js --update-env
+            }
+
+            wait_and_verify_sop_health() {
+              local attempt=1
+              local max_attempts=5
+
+              while [ "$attempt" -le "$max_attempts" ]; do
+                echo "Waiting 5s before SOP Trainer health check (attempt $attempt/$max_attempts)..."
+                sleep 5
+
+                if check_sop_pm2_health && check_sop_health; then
+                  return 0
+                fi
+
+                if [ "$attempt" -eq "$max_attempts" ]; then
+                  echo "::error::SOP Trainer health verification failed after $max_attempts attempts"
+                  pm2 status || true
+                  pm2 logs "$APP_NAME" --lines 80 --nostream || true
+                  return 1
+                fi
+
+                echo "Health check failed; hard-restarting only $APP_NAME..."
+                hard_restart_sop
+                attempt=$((attempt + 1))
+              done
+            }
+
+            if check_sop_pm2_health && check_sop_pm2_cwd; then
+              pm2 startOrReload ecosystem.config.js --update-env
+            else
+              echo "Detected stale SOP Trainer PM2 state or stale cwd before deploy."
+              hard_restart_sop
+            fi
+
+            wait_and_verify_sop_health || exit 1
+
+            pm2 save
+            rm -f "$ARCHIVE"
+            cd "$APP_ROOT/releases"
+            ls -dt ${APP_NAME}-* 2>/dev/null | tail -n +6 | xargs -r rm -rf
+
+            echo "Deployed ${RELEASE_ID} to $(hostname)"
+            pm2 status
