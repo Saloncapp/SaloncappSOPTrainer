@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { extractStepNumber, extractStaffReplyFromAgentEcho, isPreviousStepRequest, looksLikeAgentEcho, matchSteps, parseRuleIntent, scoreStep } from "./agentIntents";
+import { extractStepNumber, extractStaffReplyFromAgentEcho, isPreviousStepRequest, looksLikeAgentEcho, matchSteps, parseRuleIntent, scoreStep, stripSpeechTimestamps } from "./agentIntents";
 import type { AgentStepInfo, ExpectedInput } from "./agentTypes";
 
 const steps: AgentStepInfo[] = [
@@ -37,6 +37,15 @@ const steps: AgentStepInfo[] = [
     videoDurationSeconds: 15,
   },
 ];
+
+test("stripSpeechTimestamps removes STT clocks and keeps the spoken words", () => {
+  assert.equal(
+    stripSpeechTimestamps("[00:01.200 --> 00:04.800] apply foamy gel with hands"),
+    "apply foamy gel with hands",
+  );
+  assert.equal(stripSpeechTimestamps("00:03 the mixing ratio is one to ten"), "the mixing ratio is one to ten");
+  assert.equal(stripSpeechTimestamps("apply foamy gel with hands"), "apply foamy gel with hands");
+});
 
 test("tamil-only speech is not treated as empty", () => {
   const intent = parseRuleIntent("ஆம்", "confirm");

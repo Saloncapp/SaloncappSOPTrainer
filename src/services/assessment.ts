@@ -16,6 +16,7 @@ import {
 import { allStepsCompleted, markAssessmentFailed } from "./progress";
 import { config } from "../config";
 import { formatRelatedStepAnswerKey } from "./assessmentScoring";
+import { looksLikeEmptyOrNoiseTranscript, stripSpeechTimestamps } from "./agentIntents";
 
 function sopContext(training: SopDefinition): string {
   return formatSopContext({
@@ -590,7 +591,7 @@ export async function answerAssessmentQuestion(options: {
     throw err;
   }
 
-  const providedTranscript = String(options.transcript || "").trim();
+  const providedTranscript = stripSpeechTimestamps(String(options.transcript || "").trim());
   let transcript = providedTranscript;
   let correct = false;
   let feedback = "";
@@ -637,7 +638,7 @@ export async function answerAssessmentQuestion(options: {
     throw err;
   }
 
-  if (!transcript || transcript.length < 3) {
+  if (looksLikeEmptyOrNoiseTranscript(transcript)) {
     return {
       attempt,
       progress: nextProgress,

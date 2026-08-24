@@ -102,6 +102,19 @@ export function looksLikeEmptyOrNoiseTranscript(transcript: string): boolean {
   return false;
 }
 
+/** Drop STT timing markers so they are not treated as the staff's answer. */
+export function stripSpeechTimestamps(transcript: string): string {
+  return String(transcript || "")
+    .replace(
+      /\[\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d+)?(?:\s*-->\s*\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d+)?)?\]/g,
+      " ",
+    )
+    .replace(/\(\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d+)?\)/g, " ")
+    .replace(/^\s*\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d+)?\s+/gm, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 const EN_STEP_WORDS: Record<string, number> = {
   one: 1,
   first: 1,
