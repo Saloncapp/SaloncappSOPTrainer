@@ -18,6 +18,8 @@ export interface IAgentSession extends Document {
   lastActionStepNumber: number | null;
   utteranceSeq: number;
   responseLanguage: string;
+  trainingMode?: string;
+  conversationState?: Record<string, unknown>;
   status: "active" | "abandoned" | "completed";
   createdAt: Date;
   updatedAt: Date;
@@ -47,6 +49,8 @@ const AgentSessionSchema = new Schema<IAgentSession>(
     lastActionStepNumber: { type: Number, default: null },
     utteranceSeq: { type: Number, default: 0, min: 0 },
     responseLanguage: { type: String, default: "en", trim: true, lowercase: true },
+    trainingMode: { type: String, default: null },
+    conversationState: { type: Schema.Types.Mixed, default: null },
     status: {
       type: String,
       enum: ["active", "abandoned", "completed"],

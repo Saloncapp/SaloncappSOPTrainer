@@ -1,7 +1,8 @@
 import { hydrafacial } from "./hydrafacial";
+import { managerClientHandling } from "./managerClientHandling";
 import type { SopDefinition } from "./types";
 
-const catalog: SopDefinition[] = [hydrafacial];
+const catalog: SopDefinition[] = [hydrafacial, managerClientHandling];
 
 export function listActiveSops(): SopDefinition[] {
   return catalog

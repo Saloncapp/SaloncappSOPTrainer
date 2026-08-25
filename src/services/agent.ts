@@ -63,6 +63,13 @@ import type {
 import { IStaffTrainingProgress } from "../models/StaffTrainingProgress";
 import { normalizeResponseLanguage, type ResponseLanguage } from "./responseLanguage";
 import { detectSpeechScript, langLog, speechPreview } from "./langDebug";
+import { isManagerClientHandling } from "./trainingModes";
+import {
+  abandonClientHandlingSession,
+  noopClientHandlingVideoComplete,
+  startClientHandlingSession,
+  submitClientHandlingTurn,
+} from "./clientHandlingAgent";
 
 function sessionLanguage(session: IAgentSession): ResponseLanguage {
   return normalizeResponseLanguage(session.responseLanguage);
@@ -630,6 +637,9 @@ export async function startOrResumeAgentSession(options: {
   responseLanguage?: string;
 }): Promise<AgentTurnResponse> {
   const training = findTrainingOrThrow(options.trainingId);
+  if (isManagerClientHandling(training)) {
+    return startClientHandlingSession(options);
+  }
   const progress = await getOrCreateProgress(options.auth, training);
   const session = await getOrCreateSession(options.auth, training, progress);
   applySessionLanguage(session, options.responseLanguage);
@@ -747,6 +757,9 @@ export async function submitAgentTurn(options: {
   languageOnly?: boolean;
 }): Promise<AgentTurnResponse> {
   const training = findTrainingOrThrow(options.trainingId);
+  if (isManagerClientHandling(training)) {
+    return submitClientHandlingTurn(options);
+  }
   let progress = await getOrCreateProgress(options.auth, training);
   const session = await getOrCreateSession(options.auth, training, progress);
   repairSessionAfterAssessment(session, progress);
@@ -1309,6 +1322,9 @@ export async function completeAgentVideo(options: {
   responseLanguage?: string;
 }): Promise<AgentTurnResponse> {
   const training = findTrainingOrThrow(options.trainingId);
+  if (isManagerClientHandling(training)) {
+    return noopClientHandlingVideoComplete(options);
+  }
   let progress = await getOrCreateProgress(options.auth, training);
   const session = await getOrCreateSession(options.auth, training, progress);
   applySessionLanguage(session, options.responseLanguage);
@@ -1420,6 +1436,9 @@ export async function abandonAgentSession(options: {
   trainingId: string;
 }): Promise<AgentTurnResponse> {
   const training = findTrainingOrThrow(options.trainingId);
+  if (isManagerClientHandling(training)) {
+    return abandonClientHandlingSession(options);
+  }
   const progress = await getOrCreateProgress(options.auth, training);
   const session = await getOrCreateSession(options.auth, training, progress);
   const ctx = buildContext(training, progress);

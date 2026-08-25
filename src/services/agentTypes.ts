@@ -9,7 +9,8 @@ export type AgentPhase =
   | "passed"
   | "failed_recovery"
   | "playing_review"
-  | "post_review";
+  | "post_review"
+  | "client_handling";
 
 export type ExpectedInput =
   | "confirm"
@@ -147,4 +148,6 @@ export type AgentTurnResponse = {
   assessment: unknown;
   recoveryMessage?: string;
   responseLanguage?: string;
+  trainingMode?: string;
+  conversationPhase?: string;
 };
