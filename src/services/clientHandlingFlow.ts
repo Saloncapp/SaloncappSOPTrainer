@@ -43,7 +43,10 @@ function asRecentTurns(raw: unknown): ClientHandlingRecentTurn[] {
   for (const item of raw) {
     if (!item || typeof item !== "object") continue;
     const t = item as Record<string, unknown>;
-    const role = t.role === "manager" || t.role === "trainer" ? t.role : null;
+    const role =
+      t.role === "manager" || t.role === "stylist" || t.role === "trainer"
+        ? t.role
+        : null;
     const text = String(t.text || "").trim();
     if (!role || !text) continue;
     const verdict =

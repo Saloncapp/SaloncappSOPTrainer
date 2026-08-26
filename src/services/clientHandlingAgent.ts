@@ -16,10 +16,59 @@ import { parseClientHandlingIntent } from "./clientHandlingIntents";
 import {
   generateClientHandlingOpening,
   processClientHandlingTurn,
+  type TurnResult,
 } from "./clientHandlingGemini";
-import { TRAINING_MODE_MANAGER_CLIENT_HANDLING } from "./trainingModes";
+import {
+  generateStylistClientHandlingOpening,
+  processStylistClientHandlingTurn,
+} from "./stylistClientHandlingGemini";
+import {
+  TRAINING_MODE_MANAGER_CLIENT_HANDLING,
+  TRAINING_MODE_STYLIST_CLIENT_HANDLING,
+  clientHandlingRoleFor,
+  type ClientHandlingRole,
+} from "./trainingModes";
 
 const CLIENT_HANDLING_PHASE = "client_handling" as const;
+
+function trainingModeForRole(role: ClientHandlingRole): string {
+  return role === "stylist"
+    ? TRAINING_MODE_STYLIST_CLIENT_HANDLING
+    : TRAINING_MODE_MANAGER_CLIENT_HANDLING;
+}
+
+function resolveRoleOrThrow(training: SopDefinition): ClientHandlingRole {
+  const role = clientHandlingRoleFor(training);
+  if (!role) {
+    throw new Error(`Training ${training.slug} is not a client-handling role`);
+  }
+  return role;
+}
+
+async function generateOpeningForRole(role: ClientHandlingRole): Promise<TurnResult> {
+  if (role === "stylist") return generateStylistClientHandlingOpening();
+  return generateClientHandlingOpening();
+}
+
+async function processTurnForRole(options: {
+  role: ClientHandlingRole;
+  state: ClientHandlingConversationState;
+  intent: ReturnType<typeof parseClientHandlingIntent>;
+  transcript: string;
+}): Promise<TurnResult> {
+  if (options.role === "stylist") {
+    return processStylistClientHandlingTurn({
+      state: options.state,
+      intent: options.intent,
+      transcript: options.transcript,
+    });
+  }
+  return processClientHandlingTurn({
+    state: options.state,
+    intent: options.intent,
+    transcript: options.transcript,
+  });
+}
 
 function sessionLanguage(session: IAgentSession): ResponseLanguage {
   return normalizeResponseLanguage(session.responseLanguage);
@@ -37,9 +86,10 @@ function readConversationState(session: IAgentSession): ClientHandlingConversati
 function writeConversationState(
   session: IAgentSession,
   state: ClientHandlingConversationState,
+  role: ClientHandlingRole,
 ): void {
   session.conversationState = state;
-  session.trainingMode = TRAINING_MODE_MANAGER_CLIENT_HANDLING;
+  session.trainingMode = trainingModeForRole(role);
 }
 
 async function localizeOutput(session: IAgentSession, text: string): Promise<string> {
@@ -61,8 +111,10 @@ async function buildTurnResponse(options: {
   spokenText: string;
   action: "listen" | "idle";
   conversationState: ClientHandlingConversationState;
+  role: ClientHandlingRole;
 }): Promise<AgentTurnResponse> {
-  const { session, training, progress, spokenText, action, conversationState } = options;
+  const { session, training, progress, spokenText, action, conversationState, role } =
+    options;
   const localized = spokenText ? await localizeOutput(session, spokenText) : "";
   if (localized) {
     session.lastSpokenText = localized;
@@ -72,7 +124,7 @@ async function buildTurnResponse(options: {
   session.phase = CLIENT_HANDLING_PHASE;
   session.expectedInput = action === "listen" ? "doubt_or_navigate" : "none";
   session.status = action === "idle" ? "abandoned" : "active";
-  writeConversationState(session, conversationState);
+  writeConversationState(session, conversationState, role);
   await session.save();
 
   return {
@@ -88,7 +140,7 @@ async function buildTurnResponse(options: {
     progress: serializeProgress(training, progress),
     assessment: null,
     responseLanguage: sessionLanguage(session),
-    trainingMode: TRAINING_MODE_MANAGER_CLIENT_HANDLING,
+    trainingMode: trainingModeForRole(role),
     conversationPhase: conversationState.phase,
   };
 }
@@ -97,6 +149,7 @@ async function getOrCreateClientHandlingSession(
   auth: StaffAuth,
   training: SopDefinition,
   progress: Awaited<ReturnType<typeof getOrCreateProgress>>,
+  role: ClientHandlingRole,
 ): Promise<IAgentSession> {
   let session = await AgentSession.findOne({
     staffId: auth.staffId,
@@ -112,7 +165,7 @@ async function getOrCreateClientHandlingSession(
       trainingSlug: training.slug,
       contentVersion: training.contentVersion,
       cycleNumber: progress.cycleNumber,
-      trainingMode: TRAINING_MODE_MANAGER_CLIENT_HANDLING,
+      trainingMode: trainingModeForRole(role),
       phase: CLIENT_HANDLING_PHASE,
       currentStepNumber: 1,
       reviewStepNumber: null,
@@ -138,6 +191,11 @@ async function getOrCreateClientHandlingSession(
     session.tenantMongoId = auth.tenantMongoId;
     changed = true;
   }
+  const expectedMode = trainingModeForRole(role);
+  if (session.trainingMode !== expectedMode) {
+    session.trainingMode = expectedMode;
+    changed = true;
+  }
   if (changed) await session.save();
   return session;
 }
@@ -148,11 +206,17 @@ export async function startClientHandlingSession(options: {
   responseLanguage?: string;
 }): Promise<AgentTurnResponse> {
   const training = findTrainingOrThrow(options.trainingId);
+  const role = resolveRoleOrThrow(training);
   const progress = await getOrCreateProgress(options.auth, training);
-  const session = await getOrCreateClientHandlingSession(options.auth, training, progress);
+  const session = await getOrCreateClientHandlingSession(
+    options.auth,
+    training,
+    progress,
+    role,
+  );
   applySessionLanguage(session, options.responseLanguage);
 
-  const opening = await generateClientHandlingOpening();
+  const opening = await generateOpeningForRole(role);
   const conversationState: ClientHandlingConversationState = {
     phase: opening.nextPhase,
     completedScenarioCount: 0,
@@ -169,6 +233,7 @@ export async function startClientHandlingSession(options: {
     spokenText: opening.spokenText,
     action: "listen",
     conversationState,
+    role,
   });
 }
 
@@ -195,8 +260,14 @@ export async function submitClientHandlingTurn(options: {
   languageOnly?: boolean;
 }): Promise<AgentTurnResponse> {
   const training = findTrainingOrThrow(options.trainingId);
+  const role = resolveRoleOrThrow(training);
   const progress = await getOrCreateProgress(options.auth, training);
-  const session = await getOrCreateClientHandlingSession(options.auth, training, progress);
+  const session = await getOrCreateClientHandlingSession(
+    options.auth,
+    training,
+    progress,
+    role,
+  );
   applySessionLanguage(session, options.responseLanguage);
 
   const state = readConversationState(session);
@@ -210,6 +281,7 @@ export async function submitClientHandlingTurn(options: {
       spokenText: spoken,
       action: state.phase === "completed" ? "idle" : "listen",
       conversationState: state,
+      role,
     });
   }
 
@@ -230,11 +302,13 @@ export async function submitClientHandlingTurn(options: {
       spokenText: emptyReprompt(state),
       action: "listen",
       conversationState: state,
+      role,
     });
   }
 
   const intent = parseClientHandlingIntent(transcript, state.phase);
-  const result = await processClientHandlingTurn({
+  const result = await processTurnForRole({
+    role,
     state,
     intent,
     transcript,
@@ -258,6 +332,7 @@ export async function submitClientHandlingTurn(options: {
     spokenText: result.spokenText,
     action,
     conversationState,
+    role,
   });
 }
 
@@ -266,8 +341,14 @@ export async function abandonClientHandlingSession(options: {
   trainingId: string;
 }): Promise<AgentTurnResponse> {
   const training = findTrainingOrThrow(options.trainingId);
+  const role = resolveRoleOrThrow(training);
   const progress = await getOrCreateProgress(options.auth, training);
-  const session = await getOrCreateClientHandlingSession(options.auth, training, progress);
+  const session = await getOrCreateClientHandlingSession(
+    options.auth,
+    training,
+    progress,
+    role,
+  );
 
   const conversationState: ClientHandlingConversationState = {
     ...readConversationState(session),
@@ -282,6 +363,7 @@ export async function abandonClientHandlingSession(options: {
     spokenText: CLIENT_HANDLING_GOODBYE,
     action: "idle",
     conversationState,
+    role,
   });
 }
 
@@ -291,8 +373,14 @@ export async function noopClientHandlingVideoComplete(options: {
   responseLanguage?: string;
 }): Promise<AgentTurnResponse> {
   const training = findTrainingOrThrow(options.trainingId);
+  const role = resolveRoleOrThrow(training);
   const progress = await getOrCreateProgress(options.auth, training);
-  const session = await getOrCreateClientHandlingSession(options.auth, training, progress);
+  const session = await getOrCreateClientHandlingSession(
+    options.auth,
+    training,
+    progress,
+    role,
+  );
   applySessionLanguage(session, options.responseLanguage);
   const state = readConversationState(session);
   return buildTurnResponse({
@@ -302,5 +390,6 @@ export async function noopClientHandlingVideoComplete(options: {
     spokenText: session.lastSpokenText || "",
     action: state.phase === "completed" ? "idle" : "listen",
     conversationState: state,
+    role,
   });
 }

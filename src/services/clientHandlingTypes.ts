@@ -14,11 +14,30 @@ export type ClientHandlingScenario = {
 };
 
 export type ClientHandlingRecentTurn = {
-  role: "manager" | "trainer";
+  role: "manager" | "stylist" | "trainer";
   text: string;
   topic?: string;
   verdict?: ClientHandlingAnswerVerdict;
 };
+
+/** Stylist Client Handling scenario themes (seven core skill areas). */
+export const STYLIST_SCENARIO_TOPIC_BANK = [
+  "client_greeting",
+  "consultation_needs",
+  "service_explanation",
+  "managing_expectations",
+  "client_questions",
+  "complaint_handling",
+  "service_completion_feedback",
+  "appointment_confirmation",
+  "hair_damage_concern",
+  "result_duration_question",
+  "product_recommendation_doubt",
+  "aftercare_guidance",
+  "unrealistic_style_request",
+  "service_comparison_question",
+  "dissatisfied_result",
+] as const;
 
 export type ClientHandlingConversationState = {
   phase: ClientHandlingPhase;

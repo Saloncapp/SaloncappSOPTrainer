@@ -63,7 +63,7 @@ import type {
 import { IStaffTrainingProgress } from "../models/StaffTrainingProgress";
 import { normalizeResponseLanguage, type ResponseLanguage } from "./responseLanguage";
 import { detectSpeechScript, langLog, speechPreview } from "./langDebug";
-import { isManagerClientHandling } from "./trainingModes";
+import { isClientHandlingTraining } from "./trainingModes";
 import {
   abandonClientHandlingSession,
   noopClientHandlingVideoComplete,
@@ -637,7 +637,7 @@ export async function startOrResumeAgentSession(options: {
   responseLanguage?: string;
 }): Promise<AgentTurnResponse> {
   const training = findTrainingOrThrow(options.trainingId);
-  if (isManagerClientHandling(training)) {
+  if (isClientHandlingTraining(training)) {
     return startClientHandlingSession(options);
   }
   const progress = await getOrCreateProgress(options.auth, training);
@@ -757,7 +757,7 @@ export async function submitAgentTurn(options: {
   languageOnly?: boolean;
 }): Promise<AgentTurnResponse> {
   const training = findTrainingOrThrow(options.trainingId);
-  if (isManagerClientHandling(training)) {
+  if (isClientHandlingTraining(training)) {
     return submitClientHandlingTurn(options);
   }
   let progress = await getOrCreateProgress(options.auth, training);
@@ -1322,7 +1322,7 @@ export async function completeAgentVideo(options: {
   responseLanguage?: string;
 }): Promise<AgentTurnResponse> {
   const training = findTrainingOrThrow(options.trainingId);
-  if (isManagerClientHandling(training)) {
+  if (isClientHandlingTraining(training)) {
     return noopClientHandlingVideoComplete(options);
   }
   let progress = await getOrCreateProgress(options.auth, training);
@@ -1436,7 +1436,7 @@ export async function abandonAgentSession(options: {
   trainingId: string;
 }): Promise<AgentTurnResponse> {
   const training = findTrainingOrThrow(options.trainingId);
-  if (isManagerClientHandling(training)) {
+  if (isClientHandlingTraining(training)) {
     return abandonClientHandlingSession(options);
   }
   const progress = await getOrCreateProgress(options.auth, training);
