@@ -16,7 +16,7 @@ export const womenStraightFinish: SopDefinition = {
   title: "Women Straight Finish",
   description: "Women Straight Finish (temporary ironing) service procedure training.",
   isActive: true,
-  contentVersion: 1,
+  contentVersion: 2,
   completionGuidance:
     "Final look: the hair should look silky, smooth, and shiny — with no dryness, damage, or static. A properly settled, beautiful result.",
   completionGuidanceLocales: womenStraightFinishCompletionGuidanceLocales,

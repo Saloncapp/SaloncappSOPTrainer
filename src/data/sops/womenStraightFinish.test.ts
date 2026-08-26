@@ -6,7 +6,7 @@ import { womenStraightFinish } from "./womenStraightFinish";
 import { womenStraightFinishMedia } from "./womenStraightFinishMedia";
 import { womenStraightFinishStepLocales } from "./womenStraightFinishLocales";
 import { trainingMedia } from "./trainingMedia";
-import { PLACEHOLDER_VIDEO_URL, resolveSopStepCopy } from "./types";
+import { resolveSopStepCopy } from "./types";
 import { trainingModeFor } from "../../services/trainingModes";
 import { postWatchPrompt } from "../../services/agentState";
 import type { AgentContext } from "../../services/agentTypes";
@@ -58,17 +58,17 @@ test("women-straight-finish has English Tamil Hindi SOP copy", () => {
   }
 });
 
-test("women-straight-finish media is isolated placeholders, never Hydrafacial", () => {
+test("women-straight-finish media is real Cloudinary URLs, never Hydrafacial", () => {
   for (let step = 1; step <= 4; step += 1) {
     const media = womenStraightFinishMedia[step];
     assert.ok(media);
-    assert.equal(media.videoUrl, PLACEHOLDER_VIDEO_URL);
-    assert.equal(media.audio.ta, "");
-    assert.equal(media.audio.en, "");
-    assert.equal(media.audio.hi, "");
+    assert.match(media.videoUrl, /^https:\/\/res\.cloudinary\.com\/saloncapp-production\/.+\.mp4$/);
+    assert.match(media.audio.ta, /^https:\/\/res\.cloudinary\.com\/saloncapp-production\/.+\.mp3$/);
+    assert.match(media.audio.en, /^https:\/\/res\.cloudinary\.com\/saloncapp-production\/.+\.mp3$/);
+    assert.match(media.audio.hi, /^https:\/\/res\.cloudinary\.com\/saloncapp-production\/.+\.mp3$/);
   }
   for (const step of womenStraightFinish.steps) {
-    assert.equal(step.videoUrl, PLACEHOLDER_VIDEO_URL);
+    assert.equal(step.videoUrl, womenStraightFinishMedia[step.stepNumber].videoUrl);
     assert.deepEqual(step.audio, womenStraightFinishMedia[step.stepNumber].audio);
     assert.notEqual(step.videoUrl, trainingMedia[step.stepNumber]?.videoUrl);
   }
