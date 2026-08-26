@@ -9,7 +9,7 @@ const HYDRAFACIAL_VIDEO_DURATION_SECONDS = 318;
 
 /**
  * Source of truth: Hydra Facial Steps.pdf (SEASOUL TRAINING)
- * Title in document: FreshFace – Hydra Facial Complete Service Procedure
+ * Title in document: FreshFace – Hydra Facial Complete Service Procedure.
  * Do not invent procedures; bump contentVersion when this file changes.
  */
 export const hydrafacial: SopDefinition = {
