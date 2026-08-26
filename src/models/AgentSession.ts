@@ -14,6 +14,11 @@ export interface IAgentSession extends Document {
   navigationOffered: boolean;
   expectedInput: ExpectedInput;
   lastSpokenText: string;
+  /**
+   * The untranslated source of lastSpokenText. Re-localizing already-localized
+   * speech cannot recover English, so language switches must start from this.
+   */
+  lastSpokenSource: string;
   lastActionType: string;
   lastActionStepNumber: number | null;
   utteranceSeq: number;
@@ -45,6 +50,7 @@ const AgentSessionSchema = new Schema<IAgentSession>(
     navigationOffered: { type: Boolean, default: false },
     expectedInput: { type: String, required: true, default: "confirm" },
     lastSpokenText: { type: String, default: "" },
+    lastSpokenSource: { type: String, default: "" },
     lastActionType: { type: String, default: "listen" },
     lastActionStepNumber: { type: Number, default: null },
     utteranceSeq: { type: Number, default: 0, min: 0 },

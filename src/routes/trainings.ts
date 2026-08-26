@@ -8,6 +8,7 @@ import {
   serializeProgress,
   updateVideoProgress,
   completeStep,
+  resetTrainingProgress,
 } from "../services/progress";
 
 const router = Router();
@@ -36,6 +37,17 @@ router.get("/", requireStaffAuth, async (req, res: Response) => {
     const data = trainings.map((t) => {
       const p = bySlug.get(t.slug);
       const stale = Boolean(p && p.contentVersion !== t.contentVersion);
+      const steps = p?.steps || [];
+      const hasAnyProgress = steps.some(
+        (s) =>
+          Boolean(s.completedAt) ||
+          Boolean(s.videoCompleted) ||
+          (Number(s.videoPositionSeconds) || 0) > 0,
+      );
+      // Reset leaves status "in_progress" with empty steps — surface as not_started.
+      const effectivelyNotStarted =
+        !p ||
+        (p.status === "in_progress" && !hasAnyProgress && !stale);
       return {
         id: t.slug,
         slug: t.slug,
@@ -43,7 +55,11 @@ router.get("/", requireStaffAuth, async (req, res: Response) => {
         description: t.description,
         contentVersion: t.contentVersion,
         stepCount: t.steps?.length ?? 0,
-        status: !p ? "not_started" : stale ? "in_progress" : p.status,
+        status: effectivelyNotStarted
+          ? "not_started"
+          : stale
+            ? "in_progress"
+            : p!.status,
         cycleNumber: p?.cycleNumber ?? 0,
       };
     });
@@ -122,5 +138,18 @@ router.post(
     }
   },
 );
+
+router.post("/:id/reset", requireStaffAuth, async (req, res: Response) => {
+  try {
+    const auth = (req as AuthedRequest).auth;
+    const { progress, training } = await resetTrainingProgress({
+      auth,
+      trainingId: req.params.id,
+    });
+    res.json({ success: true, data: serializeProgress(training, progress) });
+  } catch (err) {
+    res.status(errorStatus(err)).json({ success: false, error: errorMessage(err) });
+  }
+});
 
 export default router;

@@ -3,6 +3,7 @@ import StaffTrainingProgress, {
   ProgressStatus,
   StepProgress,
 } from "../models/StaffTrainingProgress";
+import AgentSession from "../models/AgentSession";
 import { config } from "../config";
 import type { StaffAuth } from "../middleware/auth";
 import { findSopOrThrow } from "./catalog";
@@ -382,6 +383,36 @@ export async function resetForRetraining(
   progress.currentAssessmentAttemptId = null;
   await progress.save();
   return progress;
+}
+
+/**
+ * Full staff-initiated "Start Over": wipe step/video/learning-check progress,
+ * bump the cycle, and delete the agent session so the next /agent/session
+ * recreates a fresh welcome. Assessment attempt history is kept for audit.
+ */
+export async function resetTrainingProgress(options: {
+  auth: StaffAuth;
+  trainingId: string;
+}): Promise<{ progress: IStaffTrainingProgress; training: SopDefinition }> {
+  const training = findTrainingOrThrow(options.trainingId);
+  const progress = await getOrCreateProgress(options.auth, training);
+
+  progress.contentVersion = training.contentVersion;
+  progress.status = "in_progress";
+  progress.cycleNumber = Math.max(1, progress.cycleNumber) + 1;
+  progress.steps = emptySteps(training.steps);
+  progress.learningCheck = emptyLearningCheck();
+  progress.previousLearningQuestionTexts = [];
+  progress.currentAssessmentAttemptId = null;
+  await progress.save();
+
+  await AgentSession.deleteOne({
+    staffId: options.auth.staffId,
+    tenantStoreId: options.auth.tenantStoreId,
+    trainingSlug: training.slug,
+  });
+
+  return { progress, training };
 }
 
 export async function markAssessmentFailed(

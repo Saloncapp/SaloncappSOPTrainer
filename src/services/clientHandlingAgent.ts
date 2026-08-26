@@ -92,6 +92,14 @@ function writeConversationState(
   session.trainingMode = trainingModeForRole(role);
 }
 
+/**
+ * Sessions created before lastSpokenSource existed only have localized text, so
+ * fall back to it rather than going silent.
+ */
+function lastSpokenSourceOf(session: IAgentSession): string {
+  return session.lastSpokenSource || session.lastSpokenText || "";
+}
+
 async function localizeOutput(session: IAgentSession, text: string): Promise<string> {
   return localizeTrainerSpeech({
     text,
@@ -118,6 +126,9 @@ async function buildTurnResponse(options: {
   const localized = spokenText ? await localizeOutput(session, spokenText) : "";
   if (localized) {
     session.lastSpokenText = localized;
+    // Keep the untranslated source: localizing to English is a passthrough, so
+    // replaying localized text on a switch back would keep speaking Tamil/Hindi.
+    session.lastSpokenSource = spokenText;
     session.utteranceSeq += 1;
   }
   session.lastActionType = action;
@@ -273,7 +284,7 @@ export async function submitClientHandlingTurn(options: {
   const state = readConversationState(session);
 
   if (options.languageOnly) {
-    const spoken = session.lastSpokenText || "";
+    const spoken = lastSpokenSourceOf(session);
     return buildTurnResponse({
       session,
       training,
@@ -387,7 +398,7 @@ export async function noopClientHandlingVideoComplete(options: {
     session,
     training,
     progress,
-    spokenText: session.lastSpokenText || "",
+    spokenText: lastSpokenSourceOf(session),
     action: state.phase === "completed" ? "idle" : "listen",
     conversationState: state,
     role,

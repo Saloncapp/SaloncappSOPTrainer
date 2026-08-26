@@ -8,7 +8,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "tsx --test src/services/agentState.test.ts src/services/agentIntents.test.ts src/services/clientHandlingIntents.test.ts src/services/clientHandlingFlow.test.ts src/services/trainingModes.test.ts src/services/trainerSpeechLocale.test.ts src/services/assessmentScoring.test.ts src/data/sops/hydrafacialLocales.test.ts src/data/sops/trainingMedia.test.ts src/data/sops/womenStraightFinish.test.ts"
+    "test": "tsx --test src/services/agentState.test.ts src/services/agentIntents.test.ts src/services/clientHandlingIntents.test.ts src/services/clientHandlingFlow.test.ts src/services/clientHandlingLanguage.test.ts src/services/trainingModes.test.ts src/services/trainerSpeechLocale.test.ts src/services/trainerTts.test.ts src/services/trainerTtsWarm.test.ts src/services/assessmentScoring.test.ts src/data/sops/hydrafacialLocales.test.ts src/data/sops/trainingMedia.test.ts src/data/sops/womenStraightFinish.test.ts"
   },
   "engines": {
     "node": ">=20.19.0"

@@ -5,6 +5,8 @@ import { connectDb } from "./db";
 import trainingsRouter from "./routes/trainings";
 import assessmentRouter from "./routes/assessment";
 import agentRouter from "./routes/agent";
+import speechRouter from "./routes/speech";
+import { warmTrainerSpeechCache } from "./services/trainerTtsWarm";
 
 async function main() {
   await connectDb();
@@ -22,6 +24,7 @@ async function main() {
     res.json({ success: true, service: "saloncapp-sop-trainer", status: "ok" });
   });
 
+  app.use("/api/speech", speechRouter);
   app.use("/api/trainings", trainingsRouter);
   app.use("/api/trainings/:id/agent", agentRouter);
   app.use("/api/trainings/:id", assessmentRouter);
@@ -40,6 +43,8 @@ async function main() {
 
   app.listen(config.port, () => {
     console.log(`Saloncapp SOP Trainer listening on :${config.port}`);
+    // Fire and forget: warming must never delay or fail startup.
+    void warmTrainerSpeechCache();
   });
 }
 
