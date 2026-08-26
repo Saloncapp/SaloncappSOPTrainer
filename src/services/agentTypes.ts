@@ -55,6 +55,8 @@ export type AgentContext = {
   currentStepVideoCompleted: boolean;
   status: string;
   allStepsCompleted: boolean;
+  /** Optional guidance spoken after the last step, before assessment offer. */
+  completionGuidance?: string;
 };
 
 export type IntentType =

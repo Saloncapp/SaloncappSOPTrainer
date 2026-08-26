@@ -51,3 +51,18 @@ test("Tamil resume prompt starts in Tamil and translates step titles", () => {
   assert.doesNotMatch(ta, /Cleanser/);
   assert.ok(speechMatchesResponseLanguage(ta, "ta"));
 });
+
+test("women-straight-finish welcome localizes title and step", () => {
+  const en =
+    "Welcome to Women Straight Finish training. We can begin with step 1, Hair Wash & Protection. Shall we start?";
+  const ta = localizeKnownTrainerSpeech(en, "ta");
+  const hi = localizeKnownTrainerSpeech(en, "hi");
+  assert.ok(ta);
+  assert.ok(hi);
+  assert.match(ta!, /பெண்கள் ஸ்ட்ரெய்ட் ஃபினிஷ்/);
+  assert.match(ta!, /முடி கழுவுதல் மற்றும் பாதுகாப்பு/);
+  assert.match(hi!, /वुमन स्ट्रेट फिनिश/);
+  assert.match(hi!, /हेयर वॉश और प्रोटेक्शन/);
+  assert.doesNotMatch(ta!, /Women Straight Finish/);
+  assert.doesNotMatch(hi!, /Women Straight Finish/);
+});

@@ -1,10 +1,12 @@
 import { hydrafacial } from "./hydrafacial";
 import { managerClientHandling } from "./managerClientHandling";
 import { stylistClientHandling } from "./stylistClientHandling";
+import { womenStraightFinish } from "./womenStraightFinish";
 import type { SopDefinition } from "./types";
 
 const catalog: SopDefinition[] = [
   hydrafacial,
+  womenStraightFinish,
   managerClientHandling,
   stylistClientHandling,
 ];

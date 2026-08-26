@@ -32,6 +32,12 @@ export type SopDefinition = {
   /** Bump this whenever SOP text, steps, or video URLs change. */
   contentVersion: number;
   steps: SopStep[];
+  /**
+   * Optional spoken guidance after the last step (before assessment offer).
+   * Leave unset for trainings that should keep existing post-last-step prompts.
+   */
+  completionGuidance?: string;
+  completionGuidanceLocales?: Partial<Record<"ta" | "hi", string>>;
 };
 
 export function isPlaceholderVideoUrl(videoUrl: string): boolean {

@@ -138,6 +138,7 @@ function buildContext(
     currentStepVideoCompleted: Boolean(current?.videoCompleted || current?.completedAt),
     status: progress.status,
     allStepsCompleted: allStepsCompleted(progress, training),
+    completionGuidance: training.completionGuidance?.trim() || undefined,
   };
 }
 

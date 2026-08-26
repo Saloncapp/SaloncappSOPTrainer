@@ -18,6 +18,11 @@ const SPOKEN_LABELS: Array<{ en: string; ta: string; hi: string }> = [
   { en: "Detan SAP", ta: "டிடான் எஸ் ஏ பி", hi: "डिटैन एसएपी" },
   { en: "HydraFacial", ta: "ஹைட்ராஃபேஷியல்", hi: "हाइड्राफेशियल" },
   { en: "Hydra Facial", ta: "ஹைட்ராஃபேஷியல்", hi: "हाइड्राफेशियल" },
+  { en: "Women Straight Finish", ta: "பெண்கள் ஸ்ட்ரெய்ட் ஃபினிஷ்", hi: "वुमन स्ट्रेट फिनिश" },
+  { en: "Hair Wash & Protection", ta: "முடி கழுவுதல் மற்றும் பாதுகாப்பு", hi: "हेयर वॉश और प्रोटेक्शन" },
+  { en: "4-Sectioning & Blow Dry", ta: "4 பிரிவு மற்றும் ப்ளோ-ட்ரை", hi: "4-सेक्शनिंग और ब्लो-ड्राई" },
+  { en: "Ironing Technique & Grip", ta: "இஸ்திரி தொழில்நுட்பம் மற்றும் கிரிப்", hi: "आयरनिंग तकनीक और ग्रिप" },
+  { en: "Crown Box-Sectioning", ta: "கிரவுன் பாக்ஸ் பிரிவு", hi: "क्राउन बॉक्स-सेक्शनिंग" },
   { en: "SPF", ta: "எஸ் பி எஃப்", hi: "एसपीएफ" },
 ];
 

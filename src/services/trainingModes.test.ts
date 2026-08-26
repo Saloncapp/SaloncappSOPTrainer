@@ -3,6 +3,7 @@ import test from "node:test";
 import { managerClientHandling } from "../data/sops/managerClientHandling";
 import { stylistClientHandling } from "../data/sops/stylistClientHandling";
 import { hydrafacial } from "../data/sops/hydrafacial";
+import { womenStraightFinish } from "../data/sops/womenStraightFinish";
 import {
   clientHandlingRoleFor,
   isClientHandlingTraining,
@@ -14,18 +15,22 @@ import { STYLIST_SCENARIO_TOPIC_BANK } from "./clientHandlingTypes";
 
 test("training mode is derived from slug", () => {
   assert.equal(trainingModeFor(hydrafacial), "SOP_VIDEO");
+  assert.equal(trainingModeFor(womenStraightFinish), "SOP_VIDEO");
   assert.equal(trainingModeFor(managerClientHandling), "MANAGER_CLIENT_HANDLING");
   assert.equal(trainingModeFor(stylistClientHandling), "STYLIST_CLIENT_HANDLING");
   assert.equal(isManagerClientHandling(hydrafacial), false);
+  assert.equal(isManagerClientHandling(womenStraightFinish), false);
   assert.equal(isManagerClientHandling(managerClientHandling), true);
   assert.equal(isStylistClientHandling(stylistClientHandling), true);
   assert.equal(isStylistClientHandling(managerClientHandling), false);
   assert.equal(isClientHandlingTraining(hydrafacial), false);
+  assert.equal(isClientHandlingTraining(womenStraightFinish), false);
   assert.equal(isClientHandlingTraining(managerClientHandling), true);
   assert.equal(isClientHandlingTraining(stylistClientHandling), true);
   assert.equal(clientHandlingRoleFor(managerClientHandling), "manager");
   assert.equal(clientHandlingRoleFor(stylistClientHandling), "stylist");
   assert.equal(clientHandlingRoleFor(hydrafacial), null);
+  assert.equal(clientHandlingRoleFor(womenStraightFinish), null);
 });
 
 test("stylist client handling covers the seven core skill topic areas", () => {

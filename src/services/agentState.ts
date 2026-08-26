@@ -233,6 +233,10 @@ export function postWatchPrompt(
   }
 
   if (isLastStep(ctx, cursorStepNumber)) {
+    const guidance = String(ctx.completionGuidance || "").trim();
+    if (guidance) {
+      return `Step ${watched}, ${title}, is complete. ${guidance} Ask doubts, rewatch it, revisit an earlier step, or start the assessment.`;
+    }
     return `Step ${watched}, ${title}, is complete. Ask doubts, rewatch it, revisit an earlier step, or start the assessment.`;
   }
 
