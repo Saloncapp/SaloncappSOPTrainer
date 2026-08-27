@@ -521,6 +521,7 @@ test("next on the last completed step offers the assessment", () => {
   );
   assert.equal(result.snapshot.phase, "awaiting_assessment");
   assert.match(result.spokenText, /assessment/i);
+  assert.match(result.spokenText, /60 percent or more/i);
 });
 
 test("last step prompt mentions assessment, earlier steps do not", () => {
@@ -681,7 +682,7 @@ test("pass and fail branch from assessment_finished", () => {
 
   const failed = reduceAgent(
     assessing,
-    { type: "assessment_finished", passed: false, scorePercent: 70 },
+    { type: "assessment_finished", passed: false, scorePercent: 40 },
     ctx({ allStepsCompleted: true, status: "failed_retraining", completedStepNumbers: [1, 2] }),
   );
   assert.equal(failed.snapshot.phase, "failed_recovery");

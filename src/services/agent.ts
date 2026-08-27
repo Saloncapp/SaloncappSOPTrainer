@@ -36,6 +36,7 @@ import {
   looksLikeExplicitStepNavigation,
   looksLikePlayStepRequest,
   looksLikeQuestion,
+  hasNonLatinScript,
   matchSteps,
   parseRuleIntent,
   stripAgentPlaybackEcho,
@@ -559,6 +560,11 @@ async function resolveIntent(options: {
     return { type: "unknown", query: transcript };
   }
 
+  // Welcome: unknown is silence/garbled speech — never guess yes/doubt from it.
+  if (expectedInput === "confirm") {
+    return { type: "unknown", query: transcript };
+  }
+
   try {
     const gemini = await interpretTrainingUtterance({
       transcript,
@@ -1042,7 +1048,7 @@ export async function submitAgentTurn(options: {
     !looksLikeExplicitStepNavigation(transcript) &&
     !looksLikeDecline(transcript) &&
     (intent.type === "doubt" ||
-      (intent.type === "unknown" && transcript.trim().length >= 4) ||
+      (intent.type === "unknown" && hasNonLatinScript(transcript)) ||
       (intent.type === "review" && looksLikeQuestion(transcript)));
 
   if (shouldAnswerDoubt) {

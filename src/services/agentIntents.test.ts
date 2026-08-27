@@ -65,6 +65,8 @@ test("silence, fillers, and garbled welcome speech stay empty", () => {
   assert.equal(parseRuleIntent("ok", "confirm").type, "confirm");
   assert.equal(parseRuleIntent("foamy gel cleanser", "confirm").type, "unknown");
   assert.equal(parseRuleIntent("play step 1", "confirm").type, "review");
+  assert.equal(parseRuleIntent("foamy gel with both hands", "confirm").type, "unknown");
+  assert.equal(parseRuleIntent("what is foamy gel cleanser", "confirm").type, "doubt");
 });
 
 test("agent TTS echo of the welcome prompt is not a staff command", () => {

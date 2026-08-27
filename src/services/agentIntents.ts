@@ -655,9 +655,8 @@ export function parseRuleIntent(
     if (stepNumber || hasWord(text, REVIEW_RE) || looksLikePreviousUtterance(original, text)) {
       return { type: "review", query: transcript, stepNumber };
     }
-    if (text.split(" ").length >= 5) {
-      return { type: "doubt", query: transcript };
-    }
+    // Do not treat leftover TTS / STT filler as a doubt. Real questions already
+    // mapped above; anything else stays unknown so the agent can say it didn't hear.
     return { type: "unknown", query: transcript };
   }
 
