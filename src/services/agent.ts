@@ -40,6 +40,7 @@ import {
   matchSteps,
   parseRuleIntent,
   stripAgentPlaybackEcho,
+  stripSpeechTimestamps,
 } from "./agentIntents";
 import {
   bootstrap,
@@ -797,7 +798,7 @@ export async function submitAgentTurn(options: {
     return serializeTurn({ session, training, progress, reduced });
   }
 
-  let transcript = String(options.transcript || "").trim();
+  let transcript = stripSpeechTimestamps(String(options.transcript || "").trim());
 
   if (session.phase === "playing_video" || session.phase === "playing_review") {
     if (!transcript && options.audioBase64 && options.mimeType) {
@@ -806,7 +807,10 @@ export async function submitAgentTurn(options: {
         mimeType: options.mimeType,
       });
       if (!stt.emptyOrNoise) {
-        transcript = stt.transcript.trim();
+        transcript = stripSpeechTimestamps(stt.transcript.trim());
+        if (!transcript || looksLikeEmptyOrNoiseTranscript(transcript)) {
+          transcript = "";
+        }
       }
     }
     if (!transcript) {
@@ -894,7 +898,10 @@ export async function submitAgentTurn(options: {
     if (stt.emptyOrNoise || looksLikeEmptyOrNoiseTranscript(stt.transcript)) {
       transcript = "";
     } else {
-      transcript = stt.transcript;
+      transcript = stripSpeechTimestamps(stt.transcript);
+      if (!transcript || looksLikeEmptyOrNoiseTranscript(transcript)) {
+        transcript = "";
+      }
     }
   }
 

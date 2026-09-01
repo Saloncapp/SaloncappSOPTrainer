@@ -93,13 +93,32 @@ const FILLER_ONLY_RE = /^(um+|uh+|er+|ah+|oh+|hmm+|mm+|mhm+|huh+|eh+|ha+|hm+)$/;
 export function looksLikeEmptyOrNoiseTranscript(transcript: string): boolean {
   const original = String(transcript || "").trim();
   if (!original) return true;
+  if (looksLikeSpeechTimestampArtifact(original)) return true;
   const text = normalizeText(original);
   if (!text) return true;
   if (hasNonLatinScript(original)) return false;
   const compact = text.replace(/\s+/g, "");
   if (compact.length < 2) return true;
   if (FILLER_ONLY_RE.test(text)) return true;
+  if (/^\d+$/.test(compact)) return true;
   return false;
+}
+
+/** True when STT returned only a Whisper-style clock with no spoken words. */
+export function looksLikeSpeechTimestampArtifact(transcript: string): boolean {
+  const original = String(transcript || "").trim();
+  if (!original) return true;
+  if (
+    /^\[?\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d+)?(?:\s*-->\s*\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d+)?)?\]?$/.test(
+      original,
+    )
+  ) {
+    return true;
+  }
+  if (/^\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d+)?$/.test(original)) {
+    return true;
+  }
+  return !stripSpeechTimestamps(original);
 }
 
 /** Drop STT timing markers so they are not treated as the staff's answer. */
@@ -110,6 +129,7 @@ export function stripSpeechTimestamps(transcript: string): string {
       " ",
     )
     .replace(/\(\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d+)?\)/g, " ")
+    .replace(/^\s*\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d+)?\s*$/gm, " ")
     .replace(/^\s*\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d+)?\s+/gm, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -470,7 +490,7 @@ export function parseRuleIntent(
   transcript: string,
   expectedInput: ExpectedInput,
 ): ParsedIntent {
-  const original = String(transcript || "").trim();
+  const original = stripSpeechTimestamps(String(transcript || "").trim());
   if (!original) {
     return { type: "empty" };
   }
@@ -678,6 +698,7 @@ function looksLikeReviewRequest(text: string, original = text): boolean {
   if (hasWord(text, PREVIOUS_RE)) return true;
   const tokens = tokenize(text);
   if (tokens.length === 0) return false;
+  if (tokens.every((token) => /^\d+$/.test(token))) return false;
   if (QUESTION_RE.test(text) || DOUBT_SEEKING_RE.test(text)) return false;
   // Bare concept/title mention (e.g. "skin analysis") can mean review.
   return tokens.length >= 2;

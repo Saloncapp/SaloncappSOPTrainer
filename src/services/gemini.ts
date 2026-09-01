@@ -1,7 +1,7 @@
 import { GoogleGenAI } from "@google/genai";
 import { config } from "../config";
 import type { SopStep } from "../data/sops/types";
-import { looksLikeEmptyOrNoiseTranscript } from "./agentIntents";
+import { looksLikeEmptyOrNoiseTranscript, stripSpeechTimestamps } from "./agentIntents";
 import {
   STRICT_ASSESSMENT_RUBRIC,
   finalizeAssessmentCorrectness,
@@ -423,7 +423,7 @@ Return JSON:
     confidence?: number;
   };
 
-  const transcript = String(parsed.transcript || "").trim();
+  const transcript = stripSpeechTimestamps(String(parsed.transcript || "").trim());
   const emptyOrNoise =
     Boolean(parsed.emptyOrNoise) || looksLikeEmptyOrNoiseTranscript(transcript);
   langLog("stt.transcribe", {

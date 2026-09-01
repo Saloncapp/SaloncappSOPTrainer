@@ -44,7 +44,16 @@ test("stripSpeechTimestamps removes STT clocks and keeps the spoken words", () =
     "apply foamy gel with hands",
   );
   assert.equal(stripSpeechTimestamps("00:03 the mixing ratio is one to ten"), "the mixing ratio is one to ten");
+  assert.equal(stripSpeechTimestamps("00:01"), "");
+  assert.equal(stripSpeechTimestamps("[00:01.000 --> 00:02.000]"), "");
   assert.equal(stripSpeechTimestamps("apply foamy gel with hands"), "apply foamy gel with hands");
+});
+
+test("timestamp-only STT artifacts are treated as empty noise", () => {
+  for (const phrase of ["00:01", "0:01", "00:01.200", "[00:01.000 --> 00:02.000]", "01", "00 01"]) {
+    assert.equal(parseRuleIntent(phrase, "confirm").type, "empty", phrase);
+    assert.equal(parseRuleIntent(phrase, "doubt_or_navigate").type, "empty", phrase);
+  }
 });
 
 test("tamil-only speech is not treated as empty", () => {
