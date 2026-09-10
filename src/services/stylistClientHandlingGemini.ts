@@ -1,5 +1,3 @@
-import { GoogleGenAI } from "@google/genai";
-import { config } from "../config";
 import type {
   ClientHandlingAnswerVerdict,
   ClientHandlingConversationState,
@@ -23,37 +21,8 @@ import {
   canStartNextScenario,
   parseAnswerVerdict,
 } from "./clientHandlingFlow";
-import { parseModelJson } from "./gemini";
+import { generateAiJson } from "./ai-client";
 import type { TurnResult } from "./clientHandlingGemini";
-
-const GEMINI_TIMEOUT_MS = 45000;
-
-let geminiClient: GoogleGenAI | null = null;
-
-function getGeminiClient(): GoogleGenAI {
-  if (!geminiClient) {
-    if (!config.geminiApiKey) {
-      throw new Error("GEMINI_API_KEY / GOOGLE_GEMINI_API_KEY is not configured");
-    }
-    geminiClient = new GoogleGenAI({ apiKey: config.geminiApiKey });
-  }
-  return geminiClient;
-}
-
-function extractResponseText(response: unknown): string {
-  const r = response as {
-    text?: string;
-    candidates?: Array<{
-      content?: { parts?: Array<{ text?: string; thought?: boolean }> };
-    }>;
-  };
-  if (typeof r.text === "string" && r.text.trim()) return r.text.trim();
-  let text = "";
-  for (const part of r.candidates?.[0]?.content?.parts ?? []) {
-    if (typeof part.text === "string" && !part.thought) text += part.text;
-  }
-  return text.trim();
-}
 
 const STYLIST_CLIENT_HANDLING_SYSTEM = `You are a supportive professional salon stylist trainer helping a stylist practise client-handling situations. You are not a strict examination bot.
 
@@ -129,27 +98,11 @@ async function generateStylistClientHandlingJson(
   prompt: string,
   maxOutputTokens = 1024,
 ): Promise<unknown> {
-  const ai = getGeminiClient();
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
-  try {
-    const response = await ai.models.generateContent({
-      model: config.geminiModel,
-      contents: prompt,
-      config: {
-        systemInstruction: STYLIST_CLIENT_HANDLING_SYSTEM,
-        responseMimeType: "application/json",
-        abortSignal: controller.signal,
-        maxOutputTokens,
-        thinkingConfig: { thinkingBudget: 0 },
-      },
-    });
-    const text = extractResponseText(response);
-    if (!text) throw new Error("Empty Gemini response");
-    return parseModelJson(text);
-  } finally {
-    clearTimeout(timer);
-  }
+  return generateAiJson({
+    prompt,
+    systemInstruction: STYLIST_CLIENT_HANDLING_SYSTEM,
+    maxOutputTokens,
+  });
 }
 
 function pickUnusedTopics(used: string[]): string[] {

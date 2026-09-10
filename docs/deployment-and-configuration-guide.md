@@ -116,8 +116,18 @@ MONGODB_URI=mongodb+srv://USER:PASSWORD@CLUSTER/saloncapp_sop_trainer_ENV?retryW
 # Must match SaloncappRepo NEXTAUTH_SECRET in the same environment.
 NEXTAUTH_SECRET=replace-with-the-same-secret-used-by-saloncapprepo
 
+# google | sarvam  (default: google). Invalid values keep Google.
+AI_PROVIDER=google
+
 GEMINI_API_KEY=replace-with-gemini-key
 GEMINI_MODEL=gemini-2.5-flash-lite
+
+# Required when AI_PROVIDER=sarvam. Keep the Gemini key in place.
+SARVAM_API_KEY=replace-with-sarvam-key
+SARVAM_MODEL=sarvam-105b
+SARVAM_STT_MODEL=saaras:v3
+SARVAM_TTS_MODEL=bulbul:v3
+SARVAM_TTS_SPEAKER=priya
 
 # Native mobile does not need browser CORS, but this keeps future web/admin usage explicit.
 CORS_ORIGIN=*
@@ -125,6 +135,8 @@ CORS_ORIGIN=*
 ASSESSMENT_QUESTION_COUNT=5
 ASSESSMENT_TIME_LIMIT_SECONDS=300
 ```
+
+To use Sarvam for chat, speech-to-text, and server TTS, set `AI_PROVIDER=sarvam` and `SARVAM_API_KEY` on that same `shared/.env`. Keep the Gemini key so you can switch back to `AI_PROVIDER=google` without a code change.
 
 Recommended database names:
 

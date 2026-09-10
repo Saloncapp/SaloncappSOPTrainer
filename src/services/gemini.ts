@@ -1,6 +1,6 @@
-import { GoogleGenAI } from "@google/genai";
 import { config } from "../config";
 import type { SopStep } from "../data/sops/types";
+import { generateAiJson, generateAiJsonFromAudio } from "./ai-client";
 import { looksLikeEmptyOrNoiseTranscript } from "./agentIntents";
 import {
   STRICT_ASSESSMENT_RUBRIC,
@@ -18,87 +18,7 @@ import {
 } from "./trainerSpeechLocale";
 import { detectSpeechScript, langLog, speechPreview } from "./langDebug";
 
-const GEMINI_TIMEOUT_MS = 45000;
-const MAX_AUDIO_BASE64_CHARS = 8_000_000;
-
-let geminiClient: GoogleGenAI | null = null;
-
-function getApiKey(): string {
-  if (!config.geminiApiKey) {
-    throw new Error("GEMINI_API_KEY / GOOGLE_GEMINI_API_KEY is not configured");
-  }
-  return config.geminiApiKey;
-}
-
-function getGeminiClient(): GoogleGenAI {
-  if (!geminiClient) {
-    geminiClient = new GoogleGenAI({ apiKey: getApiKey() });
-  }
-  return geminiClient;
-}
-
-function stripJsonFences(text: string): string {
-  let t = text.trim();
-  if (t.startsWith("```")) {
-    t = t.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-  }
-  return t.trim();
-}
-
-function repairTruncatedJson(text: string): string {
-  let t = text.trim();
-  if (!t) return t;
-  const quotes = (t.match(/"/g) || []).length;
-  if (quotes % 2 === 1) t += '"';
-  const openBrackets = (t.match(/\[/g) || []).length;
-  const closeBrackets = (t.match(/]/g) || []).length;
-  if (openBrackets > closeBrackets) t += "]".repeat(openBrackets - closeBrackets);
-  const openBraces = (t.match(/{/g) || []).length;
-  const closeBraces = (t.match(/}/g) || []).length;
-  if (openBraces > closeBraces) t += "}".repeat(openBraces - closeBraces);
-  return t;
-}
-
-export function parseModelJson(text: string): unknown {
-  const stripped = stripJsonFences(text);
-  const candidates = [stripped];
-  const objectStart = stripped.indexOf("{");
-  const objectEnd = stripped.lastIndexOf("}");
-  if (objectStart >= 0) {
-    if (objectEnd > objectStart) {
-      candidates.push(stripped.slice(objectStart, objectEnd + 1));
-    }
-    candidates.push(repairTruncatedJson(stripped.slice(objectStart)));
-  }
-  let lastError: unknown;
-  for (const candidate of candidates) {
-    try {
-      return JSON.parse(candidate);
-    } catch (err) {
-      lastError = err;
-    }
-  }
-  throw lastError instanceof Error ? lastError : new Error("Empty Gemini response");
-}
-
-function extractResponseText(response: unknown): string {
-  const r = response as {
-    text?: string;
-    candidates?: Array<{
-      content?: { parts?: Array<{ text?: string; thought?: boolean }> };
-    }>;
-  };
-  if (typeof r.text === "string" && r.text.trim()) {
-    return r.text.trim();
-  }
-  let text = "";
-  for (const part of r.candidates?.[0]?.content?.parts ?? []) {
-    if (typeof part.text === "string" && !part.thought) {
-      text += part.text;
-    }
-  }
-  return text.trim();
-}
+export { parseModelJson } from "./ai-client";
 
 export function formatSopContext(input: {
   title: string;
@@ -129,36 +49,12 @@ Accept answers that convey the correct meaning even if wording differs or langua
 The staff may speak Tamil, English, Hindi, or mix those languages in one sentence.
 Return valid JSON only.`;
 
-function logGeminiMs(label: string, startedAt: number): void {
-  console.log(`[agent-latency] gemini ${label} ${Date.now() - startedAt}ms`);
-}
-
 async function generateJson(prompt: string, maxOutputTokens = 512): Promise<unknown> {
-  const ai = getGeminiClient();
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
-  const startedAt = Date.now();
-  try {
-    const response = await ai.models.generateContent({
-      model: config.geminiModel,
-      contents: prompt,
-      config: {
-        systemInstruction: SYSTEM_GROUNDING,
-        responseMimeType: "application/json",
-        abortSignal: controller.signal,
-        maxOutputTokens,
-        thinkingConfig: { thinkingBudget: 0 },
-      },
-    });
-    const text = extractResponseText(response);
-    if (!text) {
-      throw new Error("Empty Gemini response");
-    }
-    return parseModelJson(text);
-  } finally {
-    clearTimeout(timer);
-    logGeminiMs("json", startedAt);
-  }
+  return generateAiJson({
+    prompt,
+    systemInstruction: SYSTEM_GROUNDING,
+    maxOutputTokens,
+  });
 }
 
 async function generateJsonWithAudio(options: {
@@ -167,47 +63,13 @@ async function generateJsonWithAudio(options: {
   mimeType: string;
   maxOutputTokens?: number;
 }): Promise<unknown> {
-  if (options.audioBase64.length > MAX_AUDIO_BASE64_CHARS) {
-    throw new Error("Audio payload too large");
-  }
-  const ai = getGeminiClient();
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
-  const startedAt = Date.now();
-  try {
-    const response = await ai.models.generateContent({
-      model: config.geminiModel,
-      contents: [
-        {
-          role: "user",
-          parts: [
-            {
-              inlineData: {
-                data: options.audioBase64,
-                mimeType: options.mimeType,
-              },
-            },
-            { text: options.prompt },
-          ],
-        },
-      ],
-      config: {
-        systemInstruction: SYSTEM_GROUNDING,
-        responseMimeType: "application/json",
-        abortSignal: controller.signal,
-        maxOutputTokens: options.maxOutputTokens ?? 256,
-        thinkingConfig: { thinkingBudget: 0 },
-      },
-    });
-    const text = extractResponseText(response);
-    if (!text) {
-      throw new Error("Empty Gemini response");
-    }
-    return parseModelJson(text);
-  } finally {
-    clearTimeout(timer);
-    logGeminiMs("audio", startedAt);
-  }
+  return generateAiJsonFromAudio({
+    prompt: options.prompt,
+    systemInstruction: SYSTEM_GROUNDING,
+    audioBase64: options.audioBase64,
+    mimeType: options.mimeType,
+    maxOutputTokens: options.maxOutputTokens ?? 256,
+  });
 }
 
 export type GeneratedQuestion = {
@@ -249,7 +111,7 @@ Return JSON:
 
   const questions = Array.isArray(parsed.questions) ? parsed.questions : [];
   if (questions.length !== 3) {
-    throw new Error("Gemini did not return exactly 3 learning questions");
+    throw new Error("AI did not return exactly 3 learning questions");
   }
   return questions.map((q, i) => ({
     index: i + 1,
@@ -347,7 +209,7 @@ Return JSON:
     .filter((q) => q.questionText.length > 0);
 
   if (usable.length < count) {
-    throw new Error(`Gemini did not return exactly ${count} assessment questions`);
+    throw new Error(`AI did not return exactly ${count} assessment questions`);
   }
 
   return shuffle(usable)

@@ -70,6 +70,7 @@ import {
   startClientHandlingSession,
   submitClientHandlingTurn,
 } from "./clientHandlingAgent";
+import { ttsClientHints } from "./ai-provider";
 
 function sessionLanguage(session: IAgentSession): ResponseLanguage {
   return normalizeResponseLanguage(session.responseLanguage);
@@ -195,6 +196,7 @@ function ignoredDuringVideoTurn(options: {
     assessment: null,
     recoveryMessage: "The trainer stays quiet while a video is playing.",
     responseLanguage: sessionLanguage(options.session),
+    ...ttsClientHints(),
   };
 }
 
@@ -285,6 +287,7 @@ async function serializeTurn(options: {
     assessment: options.assessment ?? null,
     recoveryMessage,
     responseLanguage: sessionLanguage(session),
+    ...ttsClientHints(),
   };
 }
 
@@ -1467,5 +1470,6 @@ export async function abandonAgentSession(options: {
     progress: serializeProgress(training, progress),
     assessment: null,
     responseLanguage: sessionLanguage(session),
+    ...ttsClientHints(),
   };
 }

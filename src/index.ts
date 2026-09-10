@@ -7,6 +7,7 @@ import assessmentRouter from "./routes/assessment";
 import agentRouter from "./routes/agent";
 import speechRouter from "./routes/speech";
 import { warmTrainerSpeechCache } from "./services/trainerTtsWarm";
+import { getAiProvider, prefersServerTts } from "./services/ai-provider";
 
 async function main() {
   await connectDb();
@@ -21,7 +22,13 @@ async function main() {
   app.use(express.json({ limit: "15mb" }));
 
   app.get("/health", (_req, res) => {
-    res.json({ success: true, service: "saloncapp-sop-trainer", status: "ok" });
+    res.json({
+      success: true,
+      service: "saloncapp-sop-trainer",
+      status: "ok",
+      aiProvider: getAiProvider(),
+      preferServerTts: prefersServerTts(),
+    });
   });
 
   app.use("/api/speech", speechRouter);

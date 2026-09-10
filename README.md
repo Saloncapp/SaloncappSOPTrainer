@@ -21,13 +21,25 @@ This service uses its **own MongoDB database**. Do not point `MONGODB_URI` at th
 cp .env.example .env
 # Set NEXTAUTH_SECRET to the SAME value as SaloncappRepo
 # Set MONGODB_URI to a dedicated DB (saloncapp_sop_trainer)
-# Set GEMINI_API_KEY
+# Set AI_PROVIDER=google (default) or sarvam
+# Set GEMINI_API_KEY for Google, or SARVAM_API_KEY for Sarvam
 # PORT=4010
 npm install
 npm run dev
 ```
 
 Default port: **4010**
+
+## AI provider
+
+Set `AI_PROVIDER` to choose the model stack. Google Gemini stays configured either way.
+
+| `AI_PROVIDER` | LLM / STT / TTS |
+|---|---|
+| `google` (default) | Gemini chat + multimodal audio; Cloud TTS with Gemini TTS fallback. Device TTS is used when the phone has a matching voice. |
+| `sarvam` | Sarvam chat (`sarvam-105b`), Saaras STT, Bulbul TTS. The Staff app **always** plays this server audio — it does not use the phone's Tamil/Hindi/English voices. |
+
+Unset or any other value keeps **google**. Do not remove `GEMINI_API_KEY` when switching to Sarvam — flip back anytime. On servers, add the vars to `~/SaloncappSOPTrainer/shared/.env`.
 
 ## Staff App
 

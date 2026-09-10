@@ -21,6 +21,13 @@ export const config = {
   geminiApiKey:
     process.env.GEMINI_API_KEY || process.env.GOOGLE_GEMINI_API_KEY || "",
   geminiModel: process.env.GEMINI_MODEL || "gemini-2.5-flash-lite",
+  // google | sarvam. Unset or any other value keeps the current Google path.
+  aiProvider: process.env.AI_PROVIDER || "google",
+  sarvamApiKey: process.env.SARVAM_API_KEY || "",
+  sarvamModel: process.env.SARVAM_MODEL || "sarvam-105b",
+  sarvamSttModel: process.env.SARVAM_STT_MODEL || "saaras:v3",
+  sarvamTtsModel: process.env.SARVAM_TTS_MODEL || "bulbul:v3",
+  sarvamTtsSpeaker: process.env.SARVAM_TTS_SPEAKER || "priya",
   corsOrigin: process.env.CORS_ORIGIN || "*",
   // Cloud Text-to-Speech accepts the same Google API key as Gemini once the
   // "Cloud Text-to-Speech API" is enabled on the project.

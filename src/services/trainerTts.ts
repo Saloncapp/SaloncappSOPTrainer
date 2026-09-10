@@ -1,8 +1,10 @@
 import { GoogleGenAI } from "@google/genai";
 import { config } from "../config";
 import { httpError } from "../errors";
+import { getAiProvider } from "./ai-provider";
 import { detectSpeechScript, langLog, speechPreview } from "./langDebug";
 import type { ResponseLanguage } from "./responseLanguage";
+import { sarvamSynthesizeSpeech } from "./sarvam-client";
 import {
   readSpeechCache,
   speechCacheKey,
@@ -20,6 +22,8 @@ const GEMINI_TIMEOUT_MS = 60000;
  * long trainer line still fits after the margin.
  */
 const MAX_CHUNK_BYTES = 2800;
+/** Sarvam Bulbul REST accepts 2500 characters; stay under that with a margin. */
+const SARVAM_MAX_CHUNK_CHARS = 2400;
 const MAX_TEXT_CHARS = 6000;
 const MAX_SEGMENTS = 12;
 const CHUNK_CONCURRENCY = 3;
@@ -51,6 +55,9 @@ function getGeminiClient(): GoogleGenAI {
 }
 
 export function isTrainerTtsConfigured(): boolean {
+  if (getAiProvider() === "sarvam") {
+    return Boolean(config.sarvamApiKey);
+  }
   return Boolean(config.ttsApiKey);
 }
 
@@ -62,15 +69,19 @@ function byteLength(value: string): number {
  * Split on sentence boundaries so each request stays under the Cloud TTS byte
  * limit without cutting a word in half, which would be audible.
  */
-export function chunkSpeechText(text: string, maxBytes = MAX_CHUNK_BYTES): string[] {
+export function chunkSpeechText(
+  text: string,
+  maxSize = MAX_CHUNK_BYTES,
+  measure: (value: string) => number = byteLength,
+): string[] {
   const value = String(text || "").replace(/\s+/g, " ").trim();
   if (!value) return [];
-  if (byteLength(value) <= maxBytes) return [value];
+  if (measure(value) <= maxSize) return [value];
 
   const sentences = value.match(/[^.!?।\n]+[.!?।\n]*\s*/g) || [value];
   const pieces: string[] = [];
   for (const sentence of sentences) {
-    if (byteLength(sentence) <= maxBytes) {
+    if (measure(sentence) <= maxSize) {
       pieces.push(sentence);
       continue;
     }
@@ -78,7 +89,7 @@ export function chunkSpeechText(text: string, maxBytes = MAX_CHUNK_BYTES): strin
     let current = "";
     for (const word of sentence.split(" ")) {
       const candidate = current ? `${current} ${word}` : word;
-      if (current && byteLength(candidate) > maxBytes) {
+      if (current && measure(candidate) > maxSize) {
         pieces.push(current);
         current = word;
       } else {
@@ -92,7 +103,7 @@ export function chunkSpeechText(text: string, maxBytes = MAX_CHUNK_BYTES): strin
   let buffer = "";
   for (const piece of pieces) {
     const candidate = buffer ? `${buffer} ${piece.trim()}` : piece.trim();
-    if (buffer && byteLength(candidate) > maxBytes) {
+    if (buffer && measure(candidate) > maxSize) {
       chunks.push(buffer.trim());
       buffer = piece.trim();
     } else {
@@ -256,6 +267,17 @@ async function synthesizeAll(
   chunks: string[],
   language: ResponseLanguage,
 ): Promise<{ segments: string[]; mimeType: string; provider: string }> {
+  if (getAiProvider() === "sarvam") {
+    const segments = await mapWithConcurrency(chunks, CHUNK_CONCURRENCY, (chunk) =>
+      sarvamSynthesizeSpeech({
+        text: chunk,
+        language,
+        pace: speakingRateFor(language),
+      }),
+    );
+    return { segments, mimeType: "audio/mpeg", provider: "sarvam-tts" };
+  }
+
   const cloudReady = Date.now() >= cloudUnavailableUntil;
   if (cloudReady) {
     try {
@@ -287,7 +309,9 @@ export async function synthesizeTrainerSpeech(options: {
 }): Promise<TrainerSpeechAudio> {
   if (!isTrainerTtsConfigured()) {
     throw httpError(
-      "Server speech synthesis is not configured (GOOGLE_TTS_API_KEY).",
+      getAiProvider() === "sarvam"
+        ? "Server speech synthesis is not configured (SARVAM_API_KEY)."
+        : "Server speech synthesis is not configured (GOOGLE_TTS_API_KEY).",
       503,
     );
   }
@@ -316,7 +340,10 @@ export async function synthesizeTrainerSpeech(options: {
     };
   }
 
-  const chunks = chunkSpeechText(text);
+  const chunks =
+    getAiProvider() === "sarvam"
+      ? chunkSpeechText(text, SARVAM_MAX_CHUNK_CHARS, (value) => value.length)
+      : chunkSpeechText(text);
   if (!chunks.length) throw httpError("text is required", 400);
   if (chunks.length > MAX_SEGMENTS) {
     throw httpError("text is too long to synthesize", 413);

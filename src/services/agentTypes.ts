@@ -152,4 +152,6 @@ export type AgentTurnResponse = {
   responseLanguage?: string;
   trainingMode?: string;
   conversationPhase?: string;
+  preferServerTts?: boolean;
+  aiProvider?: "google" | "sarvam";
 };

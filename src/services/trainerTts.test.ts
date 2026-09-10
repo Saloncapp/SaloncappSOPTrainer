@@ -81,3 +81,13 @@ test("pcmToWav writes a valid 16-bit mono RIFF header", () => {
   assert.equal(wav.readUInt32LE(40), pcm.length, "data size");
   assert.deepEqual(wav.subarray(44), pcm, "payload preserved");
 });
+
+test("chunks by character count for Sarvam TTS limits", () => {
+  const text = Array.from({ length: 80 }, (_, i) => `Sentence number ${i} here.`).join(" ");
+  const chunks = chunkSpeechText(text, 400, (value) => value.length);
+  assert.ok(chunks.length > 1, "long English text should split by character count");
+  for (const chunk of chunks) {
+    assert.ok(chunk.length <= 400, `chunk of ${chunk.length} chars exceeds 400`);
+  }
+  assert.equal(chunks.join(" ").replace(/\s+/g, " "), text);
+});

@@ -13,6 +13,7 @@ import {
 } from "./clientHandlingTypes";
 import { normalizeConversationState } from "./clientHandlingFlow";
 import { parseClientHandlingIntent } from "./clientHandlingIntents";
+import { ttsClientHints } from "./ai-provider";
 import {
   generateClientHandlingOpening,
   processClientHandlingTurn,
@@ -153,6 +154,7 @@ async function buildTurnResponse(options: {
     responseLanguage: sessionLanguage(session),
     trainingMode: trainingModeForRole(role),
     conversationPhase: conversationState.phase,
+    ...ttsClientHints(),
   };
 }
 

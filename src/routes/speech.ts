@@ -11,8 +11,8 @@ import {
 const router = Router();
 
 /**
- * Server-rendered speech for devices whose TTS engine has no voice for the
- * selected language (common on Samsung handsets, which ship no Tamil voice).
+ * Server-rendered speech. Used as a fallback when the device TTS engine has
+ * no Tamil/Hindi voice, and as the only playback path when AI_PROVIDER=sarvam.
  */
 router.post("/", requireStaffAuth, async (req, res: Response) => {
   try {
