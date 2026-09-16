@@ -6,6 +6,7 @@ export type StaffAuth = {
   staffId: string;
   tenantStoreId: string;
   tenantMongoId: string | null;
+  actingUserId?: string;
 };
 
 export type AuthedRequest = Request & {
@@ -16,7 +17,10 @@ type JwtPayload = {
   sub?: string;
   tenantId?: string;
   role?: string;
+  actingUserId?: string;
 };
+
+const TRAINING_ROLES = new Set(["staff", "genie-staff"]);
 
 export function requireStaffAuth(
   req: Request,
@@ -40,7 +44,12 @@ export function requireStaffAuth(
     return;
   }
 
-  if (payload.role !== "staff" || !payload.sub || !payload.tenantId) {
+  if (
+    !payload.role ||
+    !TRAINING_ROLES.has(payload.role) ||
+    !payload.sub ||
+    !payload.tenantId
+  ) {
     res.status(401).json({ success: false, error: "Unauthorized" });
     return;
   }
@@ -51,10 +60,16 @@ export function requireStaffAuth(
       ? headerTenantId.trim()
       : null;
 
+  const actingUserId =
+    typeof payload.actingUserId === "string" && payload.actingUserId.trim()
+      ? payload.actingUserId.trim()
+      : undefined;
+
   (req as AuthedRequest).auth = {
     staffId: payload.sub,
     tenantStoreId: payload.tenantId,
     tenantMongoId,
+    actingUserId,
   };
 
   next();
