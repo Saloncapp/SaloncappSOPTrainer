@@ -11,8 +11,8 @@ import {
 const router = Router();
 
 /**
- * Server-rendered speech. Used as a fallback when the device TTS engine has
- * no Tamil/Hindi voice, and as the only playback path when AI_PROVIDER=sarvam.
+ * Server-rendered speech. Staff and Genie play this for every trainer line
+ * (Google Cloud/Gemini TTS or Sarvam). Device TTS is only a last-resort fallback.
  */
 router.post("/", requireStaffAuth, async (req, res: Response) => {
   try {

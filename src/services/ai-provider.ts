@@ -65,9 +65,9 @@ export function requireAiConfigured(): void {
   throw new Error("GEMINI_API_KEY / GOOGLE_GEMINI_API_KEY is not configured");
 }
 
-/** Staff app should skip device TTS and play Sarvam/server audio for every line. */
+/** Staff/Genie should skip device TTS and play server AI audio for every line. */
 export function prefersServerTts(): boolean {
-  return getAiProvider() === "sarvam";
+  return true;
 }
 
 export function ttsClientHints(): {

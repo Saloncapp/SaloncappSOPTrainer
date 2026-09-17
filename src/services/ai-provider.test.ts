@@ -16,7 +16,7 @@ test("parseAiProvider defaults unset or unknown values to google", () => {
   assert.equal(parseAiProvider("openai"), "google");
 });
 
-test("sarvam is the only provider that prefers server TTS", () => {
+test("google and sarvam both prefer server TTS over device voices", () => {
   assert.equal(parseAiProvider("sarvam") === "sarvam", true);
   assert.equal(parseAiProvider("google") === "sarvam", false);
 });
