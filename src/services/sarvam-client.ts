@@ -61,6 +61,29 @@ function looksLikeTooLongAudio(status: number, detail: string): boolean {
   );
 }
 
+/**
+ * Sarvam STT rejects bare `audio/m4a` (common from Expo/iOS). Map to an
+ * allowed type from their list (`audio/x-m4a`, `audio/mp4`, …).
+ */
+export function normalizeSarvamAudioMime(mimeType: string | undefined): string {
+  const raw = String(mimeType || "")
+    .split(";")[0]
+    .trim()
+    .toLowerCase();
+  if (
+    raw === "audio/m4a" ||
+    raw === "audio/aac" ||
+    raw === "audio/x-aac" ||
+    raw === "audio/mp4a-latm"
+  ) {
+    return "audio/x-m4a";
+  }
+  if (!raw || raw === "application/octet-stream") {
+    return "audio/mp4";
+  }
+  return raw;
+}
+
 function extensionForMime(mimeType: string): string {
   const t = String(mimeType || "").toLowerCase();
   if (t.includes("mpeg") || t.includes("mp3")) return "mp3";
@@ -125,7 +148,7 @@ export async function sarvamTranscribeAudio(options: {
   audioBase64: string;
   mimeType: string;
 }): Promise<string> {
-  const mimeType = String(options.mimeType || "audio/wav").trim() || "audio/wav";
+  const mimeType = normalizeSarvamAudioMime(options.mimeType);
   const bytes = new Uint8Array(Buffer.from(options.audioBase64, "base64"));
   if (!bytes.byteLength) return "";
 
