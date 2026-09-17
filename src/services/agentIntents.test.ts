@@ -44,7 +44,16 @@ test("stripSpeechTimestamps removes STT clocks and keeps the spoken words", () =
     "apply foamy gel with hands",
   );
   assert.equal(stripSpeechTimestamps("00:03 the mixing ratio is one to ten"), "the mixing ratio is one to ten");
+  assert.equal(stripSpeechTimestamps("00:01"), "");
+  assert.equal(stripSpeechTimestamps("[00:01.000 --> 00:02.000]"), "");
   assert.equal(stripSpeechTimestamps("apply foamy gel with hands"), "apply foamy gel with hands");
+});
+
+test("timestamp-only STT artifacts are treated as empty noise", () => {
+  for (const phrase of ["00:01", "0:01", "00:01.200", "[00:01.000 --> 00:02.000]", "01", "00 01"]) {
+    assert.equal(parseRuleIntent(phrase, "confirm").type, "empty", phrase);
+    assert.equal(parseRuleIntent(phrase, "doubt_or_navigate").type, "empty", phrase);
+  }
 });
 
 test("tamil-only speech is not treated as empty", () => {
@@ -65,6 +74,8 @@ test("silence, fillers, and garbled welcome speech stay empty", () => {
   assert.equal(parseRuleIntent("ok", "confirm").type, "confirm");
   assert.equal(parseRuleIntent("foamy gel cleanser", "confirm").type, "unknown");
   assert.equal(parseRuleIntent("play step 1", "confirm").type, "review");
+  assert.equal(parseRuleIntent("foamy gel with both hands", "confirm").type, "unknown");
+  assert.equal(parseRuleIntent("what is foamy gel cleanser", "confirm").type, "doubt");
 });
 
 test("agent TTS echo of the welcome prompt is not a staff command", () => {

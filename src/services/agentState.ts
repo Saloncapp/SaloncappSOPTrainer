@@ -1,4 +1,5 @@
 import { extractStepNumber, isPreviousStepRequest, titlesForSteps } from "./agentIntents";
+import { ASSESSMENT_PASS_PERCENT } from "./assessmentPass";
 import type {
   AgentAction,
   AgentContext,
@@ -265,7 +266,7 @@ export function doubtFollowUpPrompt(ctx: AgentContext, cursorStepNumber: number)
 }
 
 export function assessmentOfferPrompt(ctx: AgentContext): string {
-  return `You have finished every step of ${ctx.trainingTitle}. Would you like to take the five-question assessment now? You have five minutes, and you need more than 80 percent to pass.`;
+  return `You have finished every step of ${ctx.trainingTitle}. Would you like to take the five-question assessment now? You have five minutes, and you need ${ASSESSMENT_PASS_PERCENT} percent or more to pass.`;
 }
 
 export function assessmentDeclinePrompt(): string {
@@ -298,7 +299,7 @@ export function postReviewPrompt(ctx: AgentContext, stepNumber: number): string 
 
 export function failPrompt(scorePercent: number): string {
   const score = Math.round(scorePercent);
-  return `The assessment is complete. You did not pass. Your score is ${score} percent, which is below the passing mark of more than 80 percent. You can retake it now, ask a question, or tell me a step title or concept you want to review.`;
+  return `The assessment is complete. You did not pass. Your score is ${score} percent, which is below the passing mark of ${ASSESSMENT_PASS_PERCENT} percent. You can retake it now, ask a question, or tell me a step title or concept you want to review.`;
 }
 
 export function failResumePrompt(): string {

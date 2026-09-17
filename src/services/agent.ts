@@ -36,9 +36,11 @@ import {
   looksLikeExplicitStepNavigation,
   looksLikePlayStepRequest,
   looksLikeQuestion,
+  hasNonLatinScript,
   matchSteps,
   parseRuleIntent,
   stripAgentPlaybackEcho,
+  stripSpeechTimestamps,
 } from "./agentIntents";
 import {
   bootstrap,
@@ -562,6 +564,11 @@ async function resolveIntent(options: {
     return { type: "unknown", query: transcript };
   }
 
+  // Welcome: unknown is silence/garbled speech — never guess yes/doubt from it.
+  if (expectedInput === "confirm") {
+    return { type: "unknown", query: transcript };
+  }
+
   try {
     const gemini = await interpretTrainingUtterance({
       transcript,
@@ -794,7 +801,7 @@ export async function submitAgentTurn(options: {
     return serializeTurn({ session, training, progress, reduced });
   }
 
-  let transcript = String(options.transcript || "").trim();
+  let transcript = stripSpeechTimestamps(String(options.transcript || "").trim());
 
   if (session.phase === "playing_video" || session.phase === "playing_review") {
     if (!transcript && options.audioBase64 && options.mimeType) {
@@ -803,7 +810,10 @@ export async function submitAgentTurn(options: {
         mimeType: options.mimeType,
       });
       if (!stt.emptyOrNoise) {
-        transcript = stt.transcript.trim();
+        transcript = stripSpeechTimestamps(stt.transcript.trim());
+        if (!transcript || looksLikeEmptyOrNoiseTranscript(transcript)) {
+          transcript = "";
+        }
       }
     }
     if (!transcript) {
@@ -891,7 +901,10 @@ export async function submitAgentTurn(options: {
     if (stt.emptyOrNoise || looksLikeEmptyOrNoiseTranscript(stt.transcript)) {
       transcript = "";
     } else {
-      transcript = stt.transcript;
+      transcript = stripSpeechTimestamps(stt.transcript);
+      if (!transcript || looksLikeEmptyOrNoiseTranscript(transcript)) {
+        transcript = "";
+      }
     }
   }
 
@@ -1045,7 +1058,7 @@ export async function submitAgentTurn(options: {
     !looksLikeExplicitStepNavigation(transcript) &&
     !looksLikeDecline(transcript) &&
     (intent.type === "doubt" ||
-      (intent.type === "unknown" && transcript.trim().length >= 4) ||
+      (intent.type === "unknown" && hasNonLatinScript(transcript)) ||
       (intent.type === "review" && looksLikeQuestion(transcript)));
 
   if (shouldAnswerDoubt) {

@@ -4,6 +4,7 @@ import {
   finalizeAssessmentCorrectness,
   looksLikeQuestionEcho,
 } from "./assessmentScoring";
+import { didPassAssessment } from "./assessmentPass";
 
 test("reading the assessment question is not a correct answer", () => {
   const question = "What is the mixing ratio for the suction pen?";
@@ -58,4 +59,12 @@ test("a specific SOP fact is not treated as a question echo", () => {
     }),
     true,
   );
+});
+
+test("SOP assessment passes at 60 percent or more", () => {
+  assert.equal(didPassAssessment(59.9), false);
+  assert.equal(didPassAssessment(60), true);
+  assert.equal(didPassAssessment(80), true);
+  assert.equal(didPassAssessment(100), true);
+  assert.equal(didPassAssessment(Number.NaN), false);
 });

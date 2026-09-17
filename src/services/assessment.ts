@@ -17,6 +17,7 @@ import { allStepsCompleted, markAssessmentFailed } from "./progress";
 import { config } from "../config";
 import { formatRelatedStepAnswerKey } from "./assessmentScoring";
 import { looksLikeEmptyOrNoiseTranscript, stripSpeechTimestamps } from "./agentIntents";
+import { didPassAssessment } from "./assessmentPass";
 
 function sopContext(training: SopDefinition): string {
   return formatSopContext({
@@ -72,7 +73,7 @@ async function completeAttempt(options: {
   const total = attempt.questions.length || assessmentQuestionCount();
   const correctCount = attempt.questions.filter((q) => q.correct === true).length;
   const scorePercent = (correctCount / total) * 100;
-  const passed = scorePercent > 80;
+  const passed = didPassAssessment(scorePercent);
 
   attempt.scorePercent = scorePercent;
   attempt.passed = passed;
