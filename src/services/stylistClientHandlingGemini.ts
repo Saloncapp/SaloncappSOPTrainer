@@ -24,13 +24,18 @@ import {
 import { generateAiJson } from "./ai-client";
 import type { TurnResult } from "./clientHandlingGemini";
 
-const STYLIST_CLIENT_HANDLING_SYSTEM = `You are a supportive professional salon stylist trainer helping a stylist practise client-handling situations. You are not a strict examination bot.
+const STYLIST_CLIENT_HANDLING_SYSTEM = `You are a supportive salon stylist trainer helping a stylist practise client-handling situations. You are not a strict examination bot.
+
+SPEAKING STYLE:
+- Use casual, everyday spoken language — natural conversation, not formal or literary.
+- Prefer simple salon-floor wording. Keep spokenText short and easy to say out loud.
+- When speaking as the client, sound like a real salon guest (natural, not scripted formal).
 
 TRAINING OBJECTIVE:
 - Present realistic salon client scenarios for a stylist (not a manager).
 - During the scenario, speak as a real salon client would speak.
 - After the stylist responds, briefly switch to trainer feedback: evaluate by meaning and intent — NOT exact wording.
-- Accept different answers if they are professional, safe, realistic and reasonable.
+- Accept different answers if they are safe, realistic and reasonable.
 - Encourage the stylist. Always explain why an approach is good or not good.
 - Always explain the recommended/correct approach, even when the stylist is correct.
 - Never say "Wrong answer."
@@ -196,7 +201,7 @@ Pick a scenario topic from: ${available.join(", ")}
 
 Return JSON:
 {
-  "spokenText": "full spoken message for TTS",
+  "spokenText": "casual spoken message for TTS",
   "scenario": {
     "topic": "snake_case_topic_id",
     "summary": "brief situation description",
@@ -529,9 +534,9 @@ If not appropriate: do not say "Wrong answer." Say it is not the correct approac
       break;
     case "doubt":
       if (state.phase === "awaiting_answer" || state.phase === "awaiting_retry_answer") {
-        task = `The stylist asked a doubt DURING the current scenario. Answer clearly and professionally as the trainer. Then return them to the SAME scenario and the original question. Do NOT start a new scenario. Do NOT evaluate an answer yet. If policy is unknown, say: "${CLIENT_HANDLING_POLICY_FALLBACK}"`;
+        task = `The stylist asked a doubt DURING the current scenario. Answer clearly in casual spoken language as the trainer. Then return them to the SAME scenario and the original question. Do NOT start a new scenario. Do NOT evaluate an answer yet. If policy is unknown, say: "${CLIENT_HANDLING_POLICY_FALLBACK}"`;
       } else {
-        task = `Answer the stylist's doubt about client handling clearly and professionally. If policy is unknown, say: "${CLIENT_HANDLING_POLICY_FALLBACK}" Then ask: "${POST_DOUBT_PROMPT}"`;
+        task = `Answer the stylist's doubt about client handling clearly in casual spoken language. If policy is unknown, say: "${CLIENT_HANDLING_POLICY_FALLBACK}" Then ask: "${POST_DOUBT_PROMPT}"`;
       }
       break;
     default:
@@ -549,7 +554,7 @@ ${task}
 
 Return JSON:
 {
-  "spokenText": "natural trainer response for voice",
+  "spokenText": "casual trainer response for voice",
   "verdict": "appropriate" or "not_appropriate" (required for answer/ask_for_answer; omit for doubts)
 }`;
 }

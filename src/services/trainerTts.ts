@@ -238,7 +238,7 @@ async function synthesizeGeminiChunk(
     const response = await ai.models.generateContent({
       model: config.geminiTtsModel,
       // The model is an LLM, so it has to be told not to answer the text.
-      contents: `Read the following aloud exactly as written, in a warm, calm, professional trainer voice. Do not translate it, do not answer it, and do not add or omit any words.\n\n${text}`,
+      contents: `Read the following aloud exactly as written, in a warm, calm, friendly trainer voice. Do not translate it, do not answer it, and do not add or omit any words.\n\n${text}`,
       config: {
         responseModalities: ["AUDIO"],
         speechConfig: {

@@ -7,6 +7,7 @@ import {
   finalizeAssessmentCorrectness,
 } from "./assessmentScoring";
 import {
+  CASUAL_SPOKEN_STYLE,
   ensureTargetScriptLead,
   multilingualUnderstandingRule,
   speechMatchesResponseLanguage,
@@ -450,14 +451,15 @@ Current step details: ${stepDetails}
 
 ${multilingualUnderstandingRule(options.responseLanguage || "en")}
 
-Answer as a professional ${options.trainingTitle} trainer.
+Answer as a friendly ${options.trainingTitle} trainer speaking casually to salon staff.
+${CASUAL_SPOKEN_STYLE}
 Use ONLY the approved SOP. Do not invent procedures or products.
 Understand mixed Tamil/English/Hindi. Answer only what they asked, in two to four sentences.
 Write the "answer" field entirely in the selected response language.
 
 Return JSON:
 {
-  "answer": "professional spoken answer",
+  "answer": "casual spoken answer",
   "inScope": true
 }
 `, 400)) as { answer?: string; inScope?: boolean };
@@ -648,7 +650,8 @@ function rewritePrompt(text: string, responseLanguage: ResponseLanguage, strict 
 ${multilingualUnderstandingRule(responseLanguage)}
 
 Rewrite this trainer line for spoken playback in ${name}.
-Keep step numbers and timings as digits. Do not add SOP content.
+${CASUAL_SPOKEN_STYLE}
+Keep the same meaning. Keep step numbers and timings as digits. Do not add SOP content.
 ${brands}
 The first letter of "speech" must be in ${name} script so text-to-speech stays in ${name}.
 Output must be ${script}
@@ -657,7 +660,7 @@ ${strict ? `The previous draft used Latin English or the wrong language. Write $
 ${JSON.stringify(text)}
 
 Return JSON:
-{ "speech": "rewritten spoken utterance" }
+{ "speech": "casual rewritten spoken utterance" }
 `;
 }
 

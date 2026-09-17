@@ -25,6 +25,13 @@ export function responseLanguageName(code: ResponseLanguage): string {
   return LANGUAGE_NAMES[code];
 }
 
+/** Spoken register for trainer lines (matches Genie Translator casual style). */
+export const CASUAL_SPOKEN_STYLE = [
+  "Use casual, everyday spoken language — natural conversation, not formal or literary.",
+  "Prefer simple salon-floor wording a staff member would say out loud.",
+  "Avoid stiff textbook / official / written-formal phrasing.",
+].join(" ");
+
 export function multilingualUnderstandingRule(responseLanguage: ResponseLanguage): string {
   const name = responseLanguageName(responseLanguage);
   const script =
@@ -39,6 +46,7 @@ export function multilingualUnderstandingRule(responseLanguage: ResponseLanguage
     "The staff may speak Tamil, English, Hindi, or mix them in the same sentence (code-switching).",
     `Always generate the final response in the currently selected response language: ${name}.`,
     script,
+    CASUAL_SPOKEN_STYLE,
     "Do not assume that the detected input language is the desired response language.",
   ].join("\n");
 }
