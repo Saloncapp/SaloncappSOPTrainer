@@ -36,10 +36,12 @@ Set `AI_PROVIDER` to choose the model stack. Google Gemini stays configured eith
 
 | `AI_PROVIDER` | LLM / STT / TTS |
 |---|---|
-| `google` (default) | Gemini chat + multimodal audio; Cloud TTS with Gemini TTS fallback. Device TTS is used when the phone has a matching voice. |
-| `sarvam` | Sarvam chat (`sarvam-105b`), Saaras STT, Bulbul TTS. The Staff app **always** plays this server audio — it does not use the phone's Tamil/Hindi/English voices. |
+| `google` (default) | Gemini chat (`GEMINI_MODEL`). STT is Gemini multimodal (`GEMINI_STT_MODEL`) unless `GOOGLE_STT_PROVIDER=cloud`, which uses Cloud Speech-to-Text (`GOOGLE_CLOUD_STT_MODEL`, default `latest_short`) and falls back to Gemini. TTS prefers Cloud Text-to-Speech (`TTS_VOICE_*`) with Gemini TTS fallback (`GEMINI_TTS_MODEL` / `GEMINI_TTS_VOICE`). Device TTS is used when the phone has a matching voice. |
+| `sarvam` | Sarvam chat (`SARVAM_MODEL`), Saaras STT (`SARVAM_STT_MODEL`), Bulbul TTS (`SARVAM_TTS_MODEL` / `SARVAM_TTS_SPEAKER`). The Staff app **always** plays this server audio — it does not use the phone's Tamil/Hindi/English voices. |
 
 Unset or any other value keeps **google**. Do not remove `GEMINI_API_KEY` when switching to Sarvam — flip back anytime. On servers, add the vars to `~/SaloncappSOPTrainer/shared/.env`.
+
+Google STT/TTS models are env-only (same pattern as Sarvam). Changing `GEMINI_TTS_MODEL`, a Cloud TTS voice, or a Sarvam speaker invalidates the on-disk TTS cache automatically.
 
 ## Staff App
 

@@ -121,6 +121,12 @@ AI_PROVIDER=google
 
 GEMINI_API_KEY=replace-with-gemini-key
 GEMINI_MODEL=gemini-2.5-flash-lite
+# Optional. Defaults to GEMINI_MODEL. Gemini multimodal STT only.
+# GEMINI_STT_MODEL=gemini-2.5-flash-lite
+# gemini (default) | cloud. Enable Cloud Speech-to-Text for faster STT.
+# GOOGLE_STT_PROVIDER=gemini
+# GOOGLE_CLOUD_STT_MODEL=latest_short
+# GOOGLE_STT_API_KEY=
 
 # Required when AI_PROVIDER=sarvam. Keep the Gemini key in place.
 SARVAM_API_KEY=replace-with-sarvam-key
@@ -128,6 +134,18 @@ SARVAM_MODEL=sarvam-105b
 SARVAM_STT_MODEL=saaras:v3
 SARVAM_TTS_MODEL=bulbul:v3
 SARVAM_TTS_SPEAKER=priya
+
+# Google TTS (used when AI_PROVIDER=google). Cloud TTS first, Gemini TTS fallback.
+# GOOGLE_TTS_API_KEY=
+# GEMINI_TTS_MODEL=gemini-2.5-flash-preview-tts
+# GEMINI_TTS_VOICE=Kore
+# TTS_VOICE_TA=
+# TTS_VOICE_HI=
+# TTS_VOICE_EN=
+# TTS_CACHE_DIR=
+# TTS_WARM_ON_START=true
+# TTS_WARM_LIMIT=36
+# TTS_CHUNK_CONCURRENCY=3
 
 # Native mobile does not need browser CORS, but this keeps future web/admin usage explicit.
 CORS_ORIGIN=*
@@ -137,6 +155,10 @@ ASSESSMENT_TIME_LIMIT_SECONDS=300
 ```
 
 To use Sarvam for chat, speech-to-text, and server TTS, set `AI_PROVIDER=sarvam` and `SARVAM_API_KEY` on that same `shared/.env`. Keep the Gemini key so you can switch back to `AI_PROVIDER=google` without a code change.
+
+To use Google Cloud Speech-to-Text instead of Gemini multimodal STT, set `GOOGLE_STT_PROVIDER=cloud` and enable the Cloud Speech-to-Text API on the same Google project as the API key. If the API is disabled or times out, the service falls back to `GEMINI_STT_MODEL` for 10 minutes, then probes Cloud STT again.
+
+Cloud Text-to-Speech is the preferred Google TTS path (`GOOGLE_TTS_API_KEY` or the Gemini key). Pin voices with `TTS_VOICE_TA` / `TTS_VOICE_HI` / `TTS_VOICE_EN`. If Cloud TTS is unavailable, Gemini TTS (`GEMINI_TTS_MODEL`, `GEMINI_TTS_VOICE`) is used. Changing any TTS model or voice invalidates the speech cache automatically.
 
 Recommended database names:
 

@@ -2,11 +2,18 @@ import { GoogleGenAI } from "@google/genai";
 import { config } from "../config";
 import {
   getActiveAiModelName,
+  getActiveSttModelName,
   getAiProvider,
   isAiConfigured,
   requireAiConfigured,
 } from "./ai-provider";
 import { looksLikeEmptyOrNoiseTranscript } from "./agentIntents";
+import {
+  CloudSttUnavailable,
+  isCloudSttReady,
+  markCloudSttUnavailable,
+  transcribeCloudSpeech,
+} from "./googleCloudSpeech";
 import { langLog } from "./langDebug";
 import {
   SarvamAudioTooLongError,
@@ -96,6 +103,12 @@ function logAiMs(label: string, startedAt: number): void {
   );
 }
 
+function logSttMs(label: string, startedAt: number): void {
+  console.log(
+    `[agent-latency] ${getAiProvider()} ${getActiveSttModelName()} ${label} ${Date.now() - startedAt}ms`,
+  );
+}
+
 export type GenerateAiJsonOptions = {
   prompt: string;
   systemInstruction: string;
@@ -162,7 +175,7 @@ async function generateGeminiJsonFromAudio(
   const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
   try {
     const response = await ai.models.generateContent({
-      model: config.geminiModel,
+      model: config.geminiSttModel || config.geminiModel,
       contents: [
         {
           role: "user",
@@ -197,6 +210,39 @@ function emptyAudioJson(): unknown {
   return { transcript: "", emptyOrNoise: true };
 }
 
+function mergeTranscriptIntoParsed(
+  parsed: unknown,
+  transcript: string,
+): unknown {
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    return {
+      ...(parsed as Record<string, unknown>),
+      transcript,
+      emptyOrNoise: false,
+    };
+  }
+  return { transcript, emptyOrNoise: false };
+}
+
+async function generateJsonFromTranscript(
+  options: GenerateAiJsonFromAudioOptions,
+  transcript: string,
+): Promise<unknown> {
+  const emptyOrNoise =
+    !transcript || looksLikeEmptyOrNoiseTranscript(transcript);
+  if (emptyOrNoise) {
+    return { transcript: transcript || "", emptyOrNoise: true };
+  }
+
+  const prompt = `Staff audio transcript (do not translate; keep original languages):\n${JSON.stringify(transcript)}\n\n${options.prompt}`;
+  const parsed = await generateGeminiJson({
+    systemInstruction: options.systemInstruction,
+    prompt,
+    maxOutputTokens: options.maxOutputTokens ?? 256,
+  });
+  return mergeTranscriptIntoParsed(parsed, transcript);
+}
+
 async function generateSarvamJsonFromAudio(
   options: GenerateAiJsonFromAudioOptions,
 ): Promise<unknown> {
@@ -227,14 +273,17 @@ async function generateSarvamJsonFromAudio(
     prompt,
     maxOutputTokens: options.maxOutputTokens ?? 256,
   });
-  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-    return {
-      ...(parsed as Record<string, unknown>),
-      transcript,
-      emptyOrNoise: false,
-    };
-  }
-  return { transcript, emptyOrNoise: false };
+  return mergeTranscriptIntoParsed(parsed, transcript);
+}
+
+async function generateCloudSttJsonFromAudio(
+  options: GenerateAiJsonFromAudioOptions,
+): Promise<unknown> {
+  const transcript = await transcribeCloudSpeech({
+    audioBase64: options.audioBase64,
+    mimeType: options.mimeType,
+  });
+  return generateJsonFromTranscript(options, transcript);
 }
 
 export async function generateAiJsonFromAudio(
@@ -249,10 +298,48 @@ export async function generateAiJsonFromAudio(
     if (getAiProvider() === "sarvam") {
       return await generateSarvamJsonFromAudio(options);
     }
+    if (config.googleSttProvider === "cloud" && isCloudSttReady()) {
+      try {
+        return await generateCloudSttJsonFromAudio(options);
+      } catch (error) {
+        if (!(error instanceof CloudSttUnavailable)) throw error;
+        markCloudSttUnavailable();
+        langLog("stt.cloud.unavailable", {
+          error: error.message,
+          fallback: config.geminiSttModel || config.geminiModel,
+        });
+      }
+    }
     return await generateGeminiJsonFromAudio(options);
   } finally {
-    logAiMs("audio", startedAt);
+    logSttMs("audio", startedAt);
   }
+}
+
+async function transcribeGeminiAudio(options: {
+  audioBase64: string;
+  mimeType: string;
+}): Promise<{ transcript: string; emptyOrNoise: boolean }> {
+  const parsed = (await generateGeminiJsonFromAudio({
+    prompt: `
+Transcribe the HUMAN speech. Tamil, English, Hindi, or mixed is allowed.
+Transcribe in the original languages. Do not translate.
+If silence or noise only, transcript must be "" and emptyOrNoise true.
+Do not invent words.
+Return JSON:
+{ "transcript": "", "emptyOrNoise": false }
+`,
+    systemInstruction: "Return valid JSON only.",
+    audioBase64: options.audioBase64,
+    mimeType: options.mimeType,
+    maxOutputTokens: 160,
+  })) as { transcript?: string; emptyOrNoise?: boolean };
+  const transcript = String(parsed.transcript || "").trim();
+  return {
+    transcript,
+    emptyOrNoise:
+      Boolean(parsed.emptyOrNoise) || looksLikeEmptyOrNoiseTranscript(transcript),
+  };
 }
 
 export async function transcribeAiAudio(options: {
@@ -280,28 +367,25 @@ export async function transcribeAiAudio(options: {
       }
     }
 
-    const parsed = (await generateGeminiJsonFromAudio({
-      prompt: `
-Transcribe the HUMAN speech. Tamil, English, Hindi, or mixed is allowed.
-Transcribe in the original languages. Do not translate.
-If silence or noise only, transcript must be "" and emptyOrNoise true.
-Do not invent words.
-Return JSON:
-{ "transcript": "", "emptyOrNoise": false }
-`,
-      systemInstruction: "Return valid JSON only.",
-      audioBase64: options.audioBase64,
-      mimeType: options.mimeType,
-      maxOutputTokens: 160,
-    })) as { transcript?: string; emptyOrNoise?: boolean };
-    const transcript = String(parsed.transcript || "").trim();
-    return {
-      transcript,
-      emptyOrNoise:
-        Boolean(parsed.emptyOrNoise) || looksLikeEmptyOrNoiseTranscript(transcript),
-    };
+    if (config.googleSttProvider === "cloud" && isCloudSttReady()) {
+      try {
+        const transcript = await transcribeCloudSpeech(options);
+        const emptyOrNoise =
+          !transcript || looksLikeEmptyOrNoiseTranscript(transcript);
+        return { transcript: transcript || "", emptyOrNoise };
+      } catch (error) {
+        if (!(error instanceof CloudSttUnavailable)) throw error;
+        markCloudSttUnavailable();
+        langLog("stt.cloud.unavailable", {
+          error: error.message,
+          fallback: config.geminiSttModel || config.geminiModel,
+        });
+      }
+    }
+
+    return await transcribeGeminiAudio(options);
   } finally {
-    logAiMs("stt", startedAt);
+    logSttMs("stt", startedAt);
   }
 }
 

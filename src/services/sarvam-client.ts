@@ -1,6 +1,7 @@
 import { config } from "../config";
 import { httpError } from "../errors";
 import type { ResponseLanguage } from "./responseLanguage";
+import { retryOnce } from "./retryOnce";
 
 const SARVAM_BASE = "https://api.sarvam.ai";
 const CHAT_TIMEOUT_MS = 45000;
@@ -107,6 +108,14 @@ export async function sarvamChatJson(options: {
   prompt: string;
   maxOutputTokens?: number;
 }): Promise<string> {
+  return retryOnce(() => sarvamChatJsonOnce(options));
+}
+
+async function sarvamChatJsonOnce(options: {
+  systemInstruction: string;
+  prompt: string;
+  maxOutputTokens?: number;
+}): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), CHAT_TIMEOUT_MS);
   try {
@@ -145,6 +154,13 @@ export async function sarvamChatJson(options: {
 }
 
 export async function sarvamTranscribeAudio(options: {
+  audioBase64: string;
+  mimeType: string;
+}): Promise<string> {
+  return retryOnce(() => sarvamTranscribeAudioOnce(options));
+}
+
+async function sarvamTranscribeAudioOnce(options: {
   audioBase64: string;
   mimeType: string;
 }): Promise<string> {
@@ -194,6 +210,14 @@ const LANGUAGE_CODES: Record<ResponseLanguage, "ta-IN" | "hi-IN" | "en-IN"> = {
 };
 
 export async function sarvamSynthesizeSpeech(options: {
+  text: string;
+  language: ResponseLanguage;
+  pace?: number;
+}): Promise<string> {
+  return retryOnce(() => sarvamSynthesizeSpeechOnce(options));
+}
+
+async function sarvamSynthesizeSpeechOnce(options: {
   text: string;
   language: ResponseLanguage;
   pace?: number;

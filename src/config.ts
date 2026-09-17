@@ -21,6 +21,24 @@ export const config = {
   geminiApiKey:
     process.env.GEMINI_API_KEY || process.env.GOOGLE_GEMINI_API_KEY || "",
   geminiModel: process.env.GEMINI_MODEL || "gemini-2.5-flash-lite",
+  // Independent of GEMINI_MODEL so STT can stay on a faster multimodal model.
+  geminiSttModel:
+    process.env.GEMINI_STT_MODEL ||
+    process.env.GEMINI_MODEL ||
+    "gemini-2.5-flash-lite",
+  // gemini (default, multimodal generateContent) | cloud (Google Cloud Speech-to-Text).
+  googleSttProvider:
+    String(process.env.GOOGLE_STT_PROVIDER || "gemini").trim().toLowerCase() ===
+    "cloud"
+      ? ("cloud" as const)
+      : ("gemini" as const),
+  googleCloudSttModel: process.env.GOOGLE_CLOUD_STT_MODEL || "latest_short",
+  googleSttApiKey:
+    process.env.GOOGLE_STT_API_KEY ||
+    process.env.GOOGLE_TTS_API_KEY ||
+    process.env.GEMINI_API_KEY ||
+    process.env.GOOGLE_GEMINI_API_KEY ||
+    "",
   // google | sarvam. Unset or any other value keeps the current Google path.
   aiProvider: process.env.AI_PROVIDER || "google",
   sarvamApiKey: process.env.SARVAM_API_KEY || "",
@@ -49,6 +67,10 @@ export const config = {
   ttsCacheDir:
     process.env.TTS_CACHE_DIR || path.join(process.cwd(), ".cache", "tts"),
   ttsWarmOnStart: process.env.TTS_WARM_ON_START !== "false",
+  ttsChunkConcurrency: Math.min(
+    6,
+    Math.max(1, Number(process.env.TTS_CHUNK_CONCURRENCY || 3) || 3),
+  ),
   videoCompletionRatio: 0.95,
   assessmentQuestionCount: Math.max(
     1,

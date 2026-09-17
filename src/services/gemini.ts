@@ -1,6 +1,6 @@
 import { config } from "../config";
 import type { SopStep } from "../data/sops/types";
-import { generateAiJson, generateAiJsonFromAudio } from "./ai-client";
+import { generateAiJson, generateAiJsonFromAudio, transcribeAiAudio } from "./ai-client";
 import { looksLikeEmptyOrNoiseTranscript, stripSpeechTimestamps } from "./agentIntents";
 import {
   STRICT_ASSESSMENT_RUBRIC,
@@ -253,6 +253,23 @@ export async function transcribeSpeech(options: {
 }> {
   const classify = Boolean(options.expectedInput);
   try {
+    if (!classify) {
+      const result = await transcribeAiAudio({
+        audioBase64: options.audioBase64,
+        mimeType: options.mimeType,
+      });
+      const transcript = stripSpeechTimestamps(String(result.transcript || "").trim());
+      const emptyOrNoise =
+        Boolean(result.emptyOrNoise) || looksLikeEmptyOrNoiseTranscript(transcript);
+      langLog("stt.transcribe", {
+        classify: false,
+        emptyOrNoise,
+        script: detectSpeechScript(transcript),
+        preview: speechPreview(transcript),
+      });
+      return { transcript, emptyOrNoise };
+    }
+
     const parsed = (await generateJsonWithAudio({
     audioBase64: options.audioBase64,
     mimeType: options.mimeType,

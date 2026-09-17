@@ -17,6 +17,7 @@ test("there are warm lines to pre-render", () => {
  */
 test("every warm line localizes offline via a known template", () => {
   for (const { text } of buildWarmSourceLines()) {
+    assert.equal(localizeKnownTrainerSpeech(text, "en"), text);
     for (const language of ["ta", "hi"] as const) {
       const localized = localizeKnownTrainerSpeech(text, language);
       assert.ok(localized, `no template matched for ${language}: ${text}`);

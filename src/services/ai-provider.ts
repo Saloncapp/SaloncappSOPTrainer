@@ -27,6 +27,36 @@ export function getActiveAiModelName(): string {
   return config.geminiModel || "gemini-2.5-flash-lite";
 }
 
+export function getActiveSttModelName(): string {
+  if (getAiProvider() === "sarvam") {
+    return config.sarvamSttModel || "saaras:v3";
+  }
+  if (config.googleSttProvider === "cloud") {
+    return `cloud:${config.googleCloudSttModel || "latest_short"}`;
+  }
+  return config.geminiSttModel || config.geminiModel || "gemini-2.5-flash-lite";
+}
+
+export function getActiveTtsModelName(): string {
+  if (getAiProvider() === "sarvam") {
+    return `${config.sarvamTtsModel || "bulbul:v3"}/${config.sarvamTtsSpeaker || "priya"}`;
+  }
+  const voices = [config.ttsVoices.ta, config.ttsVoices.hi, config.ttsVoices.en]
+    .filter(Boolean)
+    .join(",") || "locale-female";
+  return `cloud-tts(${voices});fallback=${config.geminiTtsModel || "gemini-2.5-flash-preview-tts"}/${config.geminiTtsVoice || "Kore"}`;
+}
+
+/** One-line ops dump of the active chat / STT / TTS stack. */
+export function getSpeechStackSummary(): string {
+  return [
+    `provider=${getAiProvider()}`,
+    `chat=${getActiveAiModelName()}`,
+    `stt=${getActiveSttModelName()}`,
+    `tts=${getActiveTtsModelName()}`,
+  ].join(" ");
+}
+
 export function requireAiConfigured(): void {
   if (isAiConfigured()) return;
   if (getAiProvider() === "sarvam") {

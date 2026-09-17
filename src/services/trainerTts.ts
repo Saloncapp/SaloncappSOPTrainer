@@ -5,6 +5,7 @@ import { getAiProvider } from "./ai-provider";
 import { detectSpeechScript, langLog, speechPreview } from "./langDebug";
 import type { ResponseLanguage } from "./responseLanguage";
 import { sarvamSynthesizeSpeech } from "./sarvam-client";
+import { retryOnce } from "./retryOnce";
 import {
   readSpeechCache,
   speechCacheKey,
@@ -26,7 +27,10 @@ const MAX_CHUNK_BYTES = 2800;
 const SARVAM_MAX_CHUNK_CHARS = 2400;
 const MAX_TEXT_CHARS = 6000;
 const MAX_SEGMENTS = 12;
-const CHUNK_CONCURRENCY = 3;
+
+function chunkConcurrency(): number {
+  return config.ttsChunkConcurrency || 3;
+}
 
 /** How long to trust that Cloud TTS is unavailable before probing it again. */
 const CLOUD_RETRY_AFTER_MS = 10 * 60 * 1000;
@@ -141,9 +145,16 @@ async function mapWithConcurrency<T, R>(
 
 // --- Cloud Text-to-Speech (preferred: fast, compact MP3) --------------------
 
-class CloudTtsUnavailable extends Error {}
+class CloudTtsUnavailable extends Error {
+  retryable: boolean;
+  constructor(message: string, retryable = false) {
+    super(message);
+    this.name = "CloudTtsUnavailable";
+    this.retryable = retryable;
+  }
+}
 
-async function synthesizeCloudChunk(
+async function synthesizeCloudChunkOnce(
   text: string,
   language: ResponseLanguage,
 ): Promise<string> {
@@ -180,6 +191,7 @@ async function synthesizeCloudChunk(
       if (response.status === 400 || response.status === 403 || response.status === 404) {
         throw new CloudTtsUnavailable(
           `Cloud TTS unavailable (${response.status})${detail ? `: ${detail.slice(0, 160)}` : ""}`,
+          false,
         );
       }
       throw httpError(`Speech synthesis failed (${response.status})`, 502);
@@ -187,16 +199,23 @@ async function synthesizeCloudChunk(
 
     const body = (await response.json()) as { audioContent?: string };
     const audio = String(body.audioContent || "").trim();
-    if (!audio) throw new CloudTtsUnavailable("Cloud TTS returned no audio.");
+    if (!audio) throw new CloudTtsUnavailable("Cloud TTS returned no audio.", true);
     return audio;
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      throw new CloudTtsUnavailable("Cloud TTS timed out.");
+      throw new CloudTtsUnavailable("Cloud TTS timed out.", true);
     }
     throw error;
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function synthesizeCloudChunk(
+  text: string,
+  language: ResponseLanguage,
+): Promise<string> {
+  return retryOnce(() => synthesizeCloudChunkOnce(text, language));
 }
 
 // --- Gemini TTS (fallback: works on a plain Generative Language key) --------
@@ -227,9 +246,9 @@ export function parsePcmSampleRate(mimeType: string): number {
   return rate > 0 ? rate : 24000;
 }
 
-async function synthesizeGeminiChunk(
+async function synthesizeGeminiChunkOnce(
   text: string,
-  language: ResponseLanguage,
+  _language: ResponseLanguage,
 ): Promise<string> {
   const ai = getGeminiClient();
   const controller = new AbortController();
@@ -261,6 +280,13 @@ async function synthesizeGeminiChunk(
   }
 }
 
+async function synthesizeGeminiChunk(
+  text: string,
+  language: ResponseLanguage,
+): Promise<string> {
+  return retryOnce(() => synthesizeGeminiChunkOnce(text, language));
+}
+
 // --- Orchestration ---------------------------------------------------------
 
 async function synthesizeAll(
@@ -268,7 +294,7 @@ async function synthesizeAll(
   language: ResponseLanguage,
 ): Promise<{ segments: string[]; mimeType: string; provider: string }> {
   if (getAiProvider() === "sarvam") {
-    const segments = await mapWithConcurrency(chunks, CHUNK_CONCURRENCY, (chunk) =>
+    const segments = await mapWithConcurrency(chunks, chunkConcurrency(), (chunk) =>
       sarvamSynthesizeSpeech({
         text: chunk,
         language,
@@ -281,7 +307,7 @@ async function synthesizeAll(
   const cloudReady = Date.now() >= cloudUnavailableUntil;
   if (cloudReady) {
     try {
-      const segments = await mapWithConcurrency(chunks, CHUNK_CONCURRENCY, (chunk) =>
+      const segments = await mapWithConcurrency(chunks, chunkConcurrency(), (chunk) =>
         synthesizeCloudChunk(chunk, language),
       );
       cloudUnavailableUntil = 0;
@@ -297,7 +323,7 @@ async function synthesizeAll(
     }
   }
 
-  const segments = await mapWithConcurrency(chunks, CHUNK_CONCURRENCY, (chunk) =>
+  const segments = await mapWithConcurrency(chunks, chunkConcurrency(), (chunk) =>
     synthesizeGeminiChunk(chunk, language),
   );
   return { segments, mimeType: "audio/wav", provider: "gemini-tts" };

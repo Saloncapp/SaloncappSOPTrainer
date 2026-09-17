@@ -8,10 +8,10 @@ import { hasSpeechCache, speechCacheKey } from "./trainerTtsCache";
 import { trainingModeFor } from "./trainingModes";
 
 /** Bounded per boot so a cold cache cannot exhaust the daily API quota. */
-const DEFAULT_WARM_LIMIT = 24;
+const DEFAULT_WARM_LIMIT = 36;
 const PAUSE_BETWEEN_MS = 400;
 
-const WARM_LANGUAGES: ResponseLanguage[] = ["ta", "hi"];
+const WARM_LANGUAGES: ResponseLanguage[] = ["en", "ta", "hi"];
 
 type WarmLine = { text: string; language: ResponseLanguage; priority: number };
 

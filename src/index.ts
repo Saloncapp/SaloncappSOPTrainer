@@ -7,7 +7,7 @@ import assessmentRouter from "./routes/assessment";
 import agentRouter from "./routes/agent";
 import speechRouter from "./routes/speech";
 import { warmTrainerSpeechCache } from "./services/trainerTtsWarm";
-import { getAiProvider, prefersServerTts } from "./services/ai-provider";
+import { getAiProvider, getSpeechStackSummary, prefersServerTts } from "./services/ai-provider";
 
 async function main() {
   await connectDb();
@@ -50,6 +50,7 @@ async function main() {
 
   app.listen(config.port, () => {
     console.log(`Saloncapp SOP Trainer listening on :${config.port}`);
+    console.log(`[ai-stack] ${getSpeechStackSummary()}`);
     // Fire and forget: warming must never delay or fail startup.
     void warmTrainerSpeechCache();
   });

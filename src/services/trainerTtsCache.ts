@@ -22,8 +22,24 @@ type Manifest = {
 const memory = new Map<string, CachedSpeech>();
 let diskReady: Promise<boolean> | null = null;
 
+const TTS_CACHE_FINGERPRINT = createHash("sha1")
+  .update(
+    [
+      config.aiProvider,
+      config.geminiTtsModel,
+      config.geminiTtsVoice,
+      config.ttsVoices.ta,
+      config.ttsVoices.hi,
+      config.ttsVoices.en,
+      config.sarvamTtsModel,
+      config.sarvamTtsSpeaker,
+    ].join("|"),
+  )
+  .digest("hex")
+  .slice(0, 8);
+
 export function speechCacheKey(language: ResponseLanguage, text: string): string {
-  return `${language}-${createHash("sha1").update(text).digest("hex")}`;
+  return `${language}-${TTS_CACHE_FINGERPRINT}-${createHash("sha1").update(text).digest("hex")}`;
 }
 
 function extensionFor(mimeType: string): string {
