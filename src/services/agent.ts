@@ -73,6 +73,7 @@ import {
   submitClientHandlingTurn,
 } from "./clientHandlingAgent";
 import { ttsClientHints } from "./ai-provider";
+import { languageOnlyReduceWhilePlayingVideo } from "./languageOnlyPlayingVideo";
 
 function sessionLanguage(session: IAgentSession): ResponseLanguage {
   return normalizeResponseLanguage(session.responseLanguage);
@@ -786,8 +787,17 @@ export async function submitAgentTurn(options: {
       lastSpokenPreview: speechPreview(session.lastSpokenText || ""),
     });
     if (session.phase === "playing_video" || session.phase === "playing_review") {
+      const reduced = languageOnlyReduceWhilePlayingVideo({
+        phase: session.phase,
+        currentStepNumber: session.currentStepNumber,
+        reviewStepNumber: session.reviewStepNumber,
+        navigationOffered: Boolean(session.navigationOffered),
+        lastActionStepNumber: session.lastActionStepNumber,
+        lastSpokenText: session.lastSpokenText,
+      });
+      if (reduced.speak) session.utteranceSeq += 1;
       await session.save();
-      return ignoredDuringVideoTurn({ session, training, progress });
+      return serializeTurn({ session, training, progress, reduced });
     }
     const reduced: AgentReduceResult = {
       snapshot: snapshotFromSession(session),
