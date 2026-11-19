@@ -199,7 +199,7 @@ export function reconcileForServiceEntry(
 }
 
 export function stepIntroPrompt(ctx: AgentContext, stepNumber: number): string {
-  return `Got it. I'll play the Step ${stepNumber} training video now. Please watch carefully.`;
+  return `Got it. Please watch the Step ${stepNumber} training video now.`;
 }
 
 function trainingPassed(ctx: AgentContext): boolean {
@@ -331,7 +331,11 @@ function clarify(snapshot: AgentSnapshot, detail?: string): AgentReduceResult {
 }
 
 function looksLikePlayVideoIntro(text: string): boolean {
-  return /\bi(?:'|’)?ll play\b|\btraining video now\b/i.test(String(text || ""));
+  return (
+    /\bi(?:'|’)?ll play\b|\bplease watch the step\b|\btraining video now\b/i.test(
+      String(text || ""),
+    )
+  );
 }
 
 function underlyingPrompt(text: string): string {

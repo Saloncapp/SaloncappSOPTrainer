@@ -188,6 +188,45 @@ test("post-video doubt phase recognizes no doubts and questions", () => {
   assert.equal(isPreviousStepRequest("play step 7"), false);
   assert.equal(parseRuleIntent("முந்தைய படி", "doubt_or_navigate").type, "review");
   assert.equal(parseRuleIntent("அடுத்த படி", "doubt_or_navigate").type, "next");
+  assert.equal(parseRuleIntent("அடுத்த வீடியோ", "doubt_or_navigate").type, "next");
+  assert.equal(parseRuleIntent("அடுத்த வீடியோ போடு", "doubt_or_navigate").type, "next");
+  assert.equal(
+    parseRuleIntent("அடுத்த வீடியோ ப்ளே பண்ணு", "doubt_or_navigate").type,
+    "next",
+  );
+  assert.equal(parseRuleIntent("நெக்ஸ்ட் வீடியோ", "doubt_or_navigate").type, "next");
+  assert.equal(parseRuleIntent("அடுத்த படி என்ன", "doubt_or_navigate").type, "doubt");
+  // Real Tanglish STT: number-before-video and colloquial "earlier video".
+  assert.equal(extractStepNumber("7 வீடியோவா play பண்ணு."), 7);
+  assert.equal(
+    parseRuleIntent("7 வீடியோவா play பண்ணு.", "doubt_or_navigate").type,
+    "review",
+  );
+  assert.equal(
+    parseRuleIntent("7 வீடியோவை play பண்ணு.", "doubt_or_navigate").stepNumber,
+    7,
+  );
+  assert.equal(
+    parseRuleIntent("அடுத்த வீடியோவை play பண்ணு.", "doubt_or_navigate").type,
+    "next",
+  );
+  assert.equal(
+    isPreviousStepRequest(
+      "எனக்கு வந்து முன்னாடி இருக்கிற step video play பண்ணிடு.",
+    ),
+    true,
+  );
+  assert.equal(
+    parseRuleIntent(
+      "முன்னாடி இருக்க step ஓட videoவை வந்து play பண்ணு.",
+      "doubt_or_navigate",
+    ).type,
+    "review",
+  );
+  assert.equal(
+    parseRuleIntent("முன்னாடி என்ன பண்ணினோம்", "doubt_or_navigate").type,
+    "doubt",
+  );
   assert.equal(parseRuleIntent("पिछला स्टेप", "doubt_or_navigate").type, "review");
   assert.equal(parseRuleIntent("अगला स्टेप", "doubt_or_navigate").type, "next");
   assert.equal(

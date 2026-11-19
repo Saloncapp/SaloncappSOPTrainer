@@ -76,10 +76,16 @@ const REVIEW_RE =
   /\b(review|rewatch|watch|play|show me|go to|open)\b/;
 const PREVIOUS_RE =
   /\b(previous|go back|earlier step|earlier video|watch previous|last video|previous step|play the previous)\b/;
-const TA_PREVIOUS_RE = /முந்தைய|முந்தய|முன் படி|முன்படி/;
-const TA_NEXT_RE = /அடுத்த படி|அடுத்தது/;
+const TA_PREVIOUS_RE = /முந்தைய|முந்தய|முந்தின|முன் படி|முன்படி/;
+/** Bare "next video/step" in Tamil — no step number/name required. */
+const TA_NEXT_RE =
+  /அடுத்த\s*(?:படி|வீடியோ|ஸ்டெப்|ஸ்டேப்)|அடுத்தது|நெக்ஸ்ட்(?:\s*(?:வீடியோ|ஸ்டெப்|ஸ்டேப்|படி))?/;
 const HI_PREVIOUS_RE = /पिछला|पिछले|पहले वाला|पिछला स्टेप/;
 const HI_NEXT_RE = /अगला कदम|अगला स्टेप|अगला चरण/;
+/** Colloquial Tamil "earlier/before" — only with video/step/play context. */
+const TA_PREVIOUS_COLLOQUIAL_RE = /முன்னாடி|முன்ன/;
+const TA_PREVIOUS_NAV_CONTEXT_RE =
+  /வீடியோ|video|ஸ்டெப்|ஸ்டேப்|\bstep\b|play|போடு|பார்|பண்ண/i;
 const NO_DOUBT_RE =
   /\b(no doubt|no doubts|no question|no questions|all clear|got it|understood|nothing else|that's clear|thats clear|i'm good|im good|clear|no thanks|nothing|no more questions)\b/;
 const QUESTION_RE =
@@ -210,9 +216,13 @@ function parseStepToken(token: string): number | null {
   return EN_STEP_WORDS[raw] ?? TA_STEP_WORDS[token] ?? HI_STEP_WORDS[token] ?? null;
 }
 
-/** Drop the Agent's own "Got it, I'll play Step N..." so TTS echo cannot become the target. */
+/** Drop the Agent's own "Got it, please watch Step N..." so TTS echo cannot become the target. */
 export function stripAgentPlaybackEcho(transcript: string): string {
   return String(transcript || "")
+    .replace(
+      /\bgot it\.?\s*please watch the step \d+ training video now\.?/gi,
+      " ",
+    )
     .replace(
       /\bgot it\.?\s*i(?:'|’| will|\s+)?l*l play the step \d+ training video now(?:\.\s*please watch carefully)?\.?/gi,
       " ",
@@ -369,6 +379,15 @@ export function extractStepNumber(text: string): number | null {
   }
   if (/முதல்\s*(?:படி|ஸ்டெப்|ஸ்டேப்)/.test(original)) return 1;
 
+  // Tanglish STT: "7 வீடியோவை play பண்ணு" / "7வது வீடியோ" (number before video/step).
+  const taNumVideo = original.match(
+    /(\d{1,2}|ஒன்று|முதல்|இரண்டு|மூன்று|நான்கு|ஐந்து|ஆறு|ஏழு|எட்டு|ஒன்பது|பத்து)\s*-?\s*(?:வது\s*)?(?:வீடியோ|ஸ்டெப்|ஸ்டேப்|படி)/,
+  );
+  if (taNumVideo) {
+    const parsed = parseStepToken(taNumVideo[1]);
+    if (parsed) return parsed;
+  }
+
   const hi = original.match(
     /(?:स्टेप|चरण)\s*(\d{1,2}|एक|पहला|दो|दूसरा|तीन|चार|पांच|पाँच|छह|सात|आठ|नौ|दस)/,
   );
@@ -377,6 +396,21 @@ export function extractStepNumber(text: string): number | null {
     if (parsed) return parsed;
   }
   if (/पहला\s*(?:स्टेप|चरण)/.test(original)) return 1;
+
+  const numThenMedia = lastCapturedStep(
+    latin.matchAll(
+      /\b(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:video|step)\b/g,
+    ),
+  );
+  if (numThenMedia) return numThenMedia;
+
+  // After Tamil is stripped: "7 வீடியோவா play பண்ணு" → "7 play".
+  const numThenPlay = lastCapturedStep(
+    latin.matchAll(
+      /\b(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:video\s+)?(?:play|watch)\b/g,
+    ),
+  );
+  if (numThenPlay) return numThenPlay;
 
   return lastCapturedStep(
     latin.matchAll(
@@ -390,7 +424,7 @@ export function looksLikePlayStepRequest(transcript: string): boolean {
   const original = String(transcript || "");
   const latin = normalizeText(stripAgentPlaybackEcho(original));
   if (
-    /\b(play|go to|goto|move to|open|watch|show|want to watch|want to play|first step|second step)\b/.test(
+    /\b(play|go to|goto|move to|open|watch|show|want to watch|want to play|first step|second step|video)\b/.test(
       latin,
     )
   ) {
@@ -407,6 +441,14 @@ function hasWord(text: string, re: RegExp): boolean {
 
 function looksLikePreviousUtterance(original: string, text: string): boolean {
   if (TA_PREVIOUS_RE.test(original) || HI_PREVIOUS_RE.test(original)) return true;
+  // "முன்னாடி இருக்கிற video play பண்ணு" — earlier video without "முந்தைய".
+  if (
+    TA_PREVIOUS_COLLOQUIAL_RE.test(original) &&
+    TA_PREVIOUS_NAV_CONTEXT_RE.test(original) &&
+    !looksLikeContentQuestionAboutNext(original)
+  ) {
+    return true;
+  }
   return Boolean(text) && hasWord(text, PREVIOUS_RE);
 }
 
@@ -420,6 +462,22 @@ export function isPreviousStepRequest(transcript: string): boolean {
 function looksLikeNextUtterance(original: string, text: string): boolean {
   if (TA_NEXT_RE.test(original) || HI_NEXT_RE.test(original)) return true;
   return Boolean(text) && hasWord(text, NEXT_RE);
+}
+
+/**
+ * True when "next" phrasing is a content question ("what is the next step?")
+ * rather than a play/navigate request. Tamil play verbs (பண்ணு/செய்) alone
+ * must not block navigation — they commonly mean "do/play".
+ */
+function looksLikeContentQuestionAboutNext(transcript: string): boolean {
+  const original = String(transcript || "").trim();
+  if (!original) return false;
+  if (original.includes("?")) return true;
+  const latin = normalizeText(original);
+  if (DOUBT_QUESTION_RE.test(latin) || DOUBT_SEEKING_RE.test(latin)) return true;
+  if (/என்ன|எப்படி|ஏன்|எங்கே|எது|சந்தேகம்|வேண்டு/.test(original)) return true;
+  if (/क्या|कैसे|क्यों|कहाँ|कब|कौन|शक|समझ/.test(original)) return true;
+  return false;
 }
 
 const DOUBT_QUESTION_RE =
@@ -447,6 +505,13 @@ export function looksLikeExplicitStepNavigation(transcript: string): boolean {
   if (looksLikePlayStepRequest(original)) return true;
   if (isPreviousStepRequest(original)) return true;
   const text = normalizeText(original);
+  // "next video" / "அடுத்த வீடியோ" with no step number must not fall into doubt Q&A.
+  if (
+    looksLikeNextUtterance(original, text) &&
+    !looksLikeContentQuestionAboutNext(original)
+  ) {
+    return true;
+  }
   if (!text) return false;
   if (hasWord(text, REWATCH_RE) && !looksLikeQuestion(original)) return true;
   if (!hasWord(text, EXPLICIT_NAV_RE)) return false;
@@ -553,7 +618,13 @@ export function parseRuleIntent(
     if (looksLikePreviousUtterance(original, text) && !stepNumber) {
       return { type: "review", query: transcript, stepNumber: null };
     }
-    if ((looksLikeNextUtterance(original, text) || hasWord(text, CONFIRM_RE)) && !looksLikeQuestion(original)) {
+    if (
+      looksLikeNextUtterance(original, text) &&
+      !looksLikeContentQuestionAboutNext(original)
+    ) {
+      return { type: "next" };
+    }
+    if (hasWord(text, CONFIRM_RE) && !looksLikeQuestion(original)) {
       return { type: "next" };
     }
     if (text && hasWord(text, ASSESSMENT_RE) && !looksLikeQuestion(original) && !looksLikeDecline(original)) {
@@ -613,7 +684,10 @@ export function parseRuleIntent(
     if (hasWord(text, REWATCH_RE) && !stepNumber && !looksLikeReviewRequest(text, original)) {
       return { type: "rewatch" };
     }
-    if (looksLikeNextUtterance(original, text) && !looksLikeQuestion(original)) {
+    if (
+      looksLikeNextUtterance(original, text) &&
+      !looksLikeContentQuestionAboutNext(original)
+    ) {
       return { type: "next" };
     }
     // Questions/doubts clear concepts — do not treat title mentions as play-step.

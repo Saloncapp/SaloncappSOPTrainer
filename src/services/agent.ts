@@ -19,7 +19,7 @@ import {
 } from "./assessment";
 import AssessmentAttempt from "../models/AssessmentAttempt";
 import {
-  formatSopContext,
+  formatMinimalSopContext,
   answerStepDoubt,
   interpretTrainingUtterance,
   selectReviewStep,
@@ -499,7 +499,13 @@ async function resolveIntent(options: {
       try {
         const selected = await selectReviewStep({
           query: transcript,
-          sopContext: formatSopContext(training),
+          sopContext: formatMinimalSopContext({
+            title: training.title,
+            description: training.description,
+            steps: training.steps,
+            focusStepNumbers: matched.candidates.slice(0, 3),
+            recentSnippet: transcript,
+          }),
           steps,
         });
         if (selected.stepNumber && selected.confidence >= 0.55) {
@@ -534,7 +540,12 @@ async function resolveIntent(options: {
       try {
         const selected = await selectReviewStep({
           query: transcript,
-          sopContext: formatSopContext(training),
+          sopContext: formatMinimalSopContext({
+            title: training.title,
+            description: training.description,
+            steps: training.steps,
+            recentSnippet: transcript,
+          }),
           steps,
         });
         return {
@@ -574,7 +585,13 @@ async function resolveIntent(options: {
     const gemini = await interpretTrainingUtterance({
       transcript,
       expectedInput,
-      sopContext: formatSopContext(training),
+      sopContext: formatMinimalSopContext({
+        title: training.title,
+        description: training.description,
+        steps: training.steps,
+        expectedInput,
+        recentSnippet: transcript,
+      }),
       steps,
     });
     if (gemini.confidence < 0.5 || gemini.intent === "unknown") {
@@ -811,6 +828,20 @@ export async function submitAgentTurn(options: {
     return serializeTurn({ session, training, progress, reduced });
   }
 
+  const turnCorr = {
+    sessionId: String(session._id),
+    trainingId: options.trainingId,
+    staffId: options.auth.staffId,
+    phase: session.phase,
+    responseLanguage: sessionLanguage(session),
+  };
+  const turnStartedAt = Date.now();
+  langLog("turn.start", {
+    ...turnCorr,
+    hasTranscript: Boolean(options.transcript),
+    hasAudio: Boolean(options.audioBase64),
+  });
+
   let transcript = stripSpeechTimestamps(String(options.transcript || "").trim());
 
   if (session.phase === "playing_video" || session.phase === "playing_review") {
@@ -1046,6 +1077,13 @@ export async function submitAgentTurn(options: {
     expectedInput,
     training,
   });
+  langLog("turn.intent_detected", {
+    ...turnCorr,
+    intentType: intent.type,
+    expectedInput,
+    transcriptPreview: speechPreview(transcript),
+    durationMs: Date.now() - turnStartedAt,
+  });
 
   // Safety net: title-fuzzy "review" must not override a spoken question/doubt.
   if (
@@ -1088,7 +1126,18 @@ export async function submitAgentTurn(options: {
     if (step) {
       try {
         const answered = await answerStepDoubt({
-          sopContext: formatSopContext(training),
+          sopContext: formatMinimalSopContext({
+            title: training.title,
+            description: training.description,
+            steps: training.steps,
+            focusStepNumbers: [step.stepNumber],
+            phase: snapshot.phase,
+            expectedInput,
+            responseLanguage: sessionLanguage(session),
+            recentSnippet: session.lastSpokenText
+              ? `${session.lastSpokenText} | staff: ${transcript}`
+              : transcript,
+          }),
           trainingTitle: training.title,
           step: {
             stepNumber: step.stepNumber,

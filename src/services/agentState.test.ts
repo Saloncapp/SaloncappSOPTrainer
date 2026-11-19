@@ -463,7 +463,7 @@ test("explicit play-step transcript wins over a stale current step", () => {
     context,
   );
   assert.deepEqual(playStep1Only.action, { type: "play_video", stepNumber: 1 });
-  assert.match(playStep1Only.spokenText, /Got it\. I'll play the Step 1/i);
+  assert.match(playStep1Only.spokenText, /Got it\. Please watch the Step 1/i);
 });
 
 test("only next and previous calculate relative to currentStep", () => {
@@ -935,12 +935,12 @@ test("empty welcome does not replay a video-start intro", () => {
     welcome,
     { type: "voice", intent: { type: "empty" } },
     ctx(),
-    "Got it. I'll play the Step 1 training video now. Please watch carefully.",
+    "Got it. Please watch the Step 1 training video now.",
   );
   assert.equal(empty.snapshot.phase, "welcome");
   assert.equal(empty.action.type, "listen");
   assert.match(empty.spokenText, /can't get you/i);
-  assert.doesNotMatch(empty.spokenText, /i'll play/i);
+  assert.doesNotMatch(empty.spokenText, /please watch the step 1 training video now/i);
 });
 
 test("repeated empty replies speak one no-response prompt without concatenating", () => {

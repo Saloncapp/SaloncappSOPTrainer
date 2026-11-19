@@ -43,6 +43,62 @@ export function formatSopContext(input: {
   return lines.filter((l) => l !== undefined).join("\n");
 }
 
+/**
+ * Minimal SOP grounding for live-agent Gemini turns (doubts / interpret).
+ * Prefer current/relevant step detail + title index — not the full SOP dump.
+ */
+export function formatMinimalSopContext(input: {
+  title: string;
+  description?: string;
+  steps: SopStep[];
+  focusStepNumbers?: number[];
+  recentSnippet?: string;
+  phase?: string;
+  expectedInput?: string;
+  responseLanguage?: string;
+}): string {
+  const focus = new Set(
+    (input.focusStepNumbers || [])
+      .map((n) => Number(n))
+      .filter((n) => Number.isFinite(n) && n > 0),
+  );
+  const lines: string[] = [
+    `Service: ${input.title}`,
+    input.description ? `Description: ${input.description}` : "",
+    input.phase ? `Current phase: ${input.phase}` : "",
+    input.expectedInput ? `Expected input: ${input.expectedInput}` : "",
+    input.responseLanguage
+      ? `Response language: ${input.responseLanguage}`
+      : "",
+    "",
+    "Step index:",
+    formatSopIndex(input.steps),
+    "",
+  ];
+
+  const focusedSteps = focus.size
+    ? input.steps.filter((step) => focus.has(step.stepNumber))
+    : [];
+  if (focusedSteps.length) {
+    lines.push("Relevant step detail (SOURCE OF TRUTH — do not invent):");
+    for (const step of focusedSteps) {
+      lines.push(`Step ${step.stepNumber}: ${step.title}`);
+      lines.push(`Description: ${step.description}`);
+      if (step.importantPoints?.length) {
+        lines.push(`Important points: ${step.importantPoints.join("; ")}`);
+      }
+      lines.push("");
+    }
+  }
+
+  const snippet = String(input.recentSnippet || "").trim();
+  if (snippet) {
+    lines.push(`Recent conversation snippet: ${snippet.slice(0, 400)}`);
+  }
+
+  return lines.filter((l) => l !== undefined && l !== "").join("\n");
+}
+
 const SYSTEM_GROUNDING = `You are an SOP training evaluator for a salon staff training system.
 You MUST only use the approved SOP content provided.
 Do NOT invent procedures, products, steps, or salon advice that is not in the SOP.

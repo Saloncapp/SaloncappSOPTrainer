@@ -9,8 +9,7 @@ test("language-only during play-video intro keeps play_video instead of idle", (
     reviewStepNumber: null,
     navigationOffered: false,
     lastActionStepNumber: 1,
-    lastSpokenText:
-      "Got it. I'll play the Step 1 training video now. Please watch carefully.",
+    lastSpokenText: "Got it. Please watch the Step 1 training video now.",
   });
 
   assert.equal(reduced.action.type, "play_video");
